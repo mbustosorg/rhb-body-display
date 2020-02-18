@@ -5,27 +5,49 @@
  */
  
 import oscP5.*;
-  
+import org.gicentre.utils.spatial.*;
+import processing.pdf.*;
+
 OscP5 oscP5;
+
+WebMercator proj = new WebMercator();
+PVector tlCorner, brCorner;
 
 float heading = 0.0;
 int pressure = 0;
 float lat = 0.0;
 float lon = 0.0;
 
+PImage backgroundMap;
+
 void setup() {
-  size(800, 800);
+  size(1000, 749);
   frameRate(25);
   oscP5 = new OscP5(this, 10002);
+  setupGeo();
+  backgroundMap = loadImage("oakland.png");
 }
 
 void draw() {
-  background(0);  
-  textSize(32);
+  //background(0);
+  image(backgroundMap, 0, 0, width, height);
+  textSize(32);  
+  fill(0);
   text("Lat: " + str(lat), 10, 30);
   text("Lon: " + str(lon), 10, 60);
   text("Pressure: " + str(pressure), 10, 90);
   text("Heading: " + str(heading), 10, 120);
+  PVector rhb = geoToScreen(proj.transformCoords(new PVector(lon, lat)));
+  fill(#FF0000);
+  rectMode(CENTER);
+  translate(rhb.x, rhb.y);
+  rotate(radians(heading)); 
+  square(0, 0, 10);  
+}
+
+void setupGeo() {
+  tlCorner = proj.transformCoords(new PVector(-123.0, 38.0));
+  brCorner = proj.transformCoords(new PVector(-122.0, 37.0));
 }
 
 void handleImu(String imu) {
@@ -66,4 +88,9 @@ void oscEvent(OscMessage theOscMessage) {
   } catch (Exception e) {
     println(e);
   }
+}
+
+PVector geoToScreen(PVector geo) {
+  return new PVector(map(geo.x, tlCorner.x, brCorner.x, 0, width),
+                     map(geo.y, tlCorner.y, brCorner.y, 0, height));                
 }
