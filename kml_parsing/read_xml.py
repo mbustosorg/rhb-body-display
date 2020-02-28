@@ -16,27 +16,32 @@ import lxml.etree
 root = lxml.etree.parse('../rhbbodydisplay/data/brc.kml')
 namespaces = {'b' : 'http://www.opengis.net/kml/2.2'}
 with open('../rhbbodydisplay/data/lines.csv', 'w') as file:
-    file.write("Streets\n")
     for item in root.findall('./b:Document/b:Folder/b:name[.="Streets"]...', namespaces=namespaces):
         for section in item.findall('b:Placemark/b:MultiGeometry/b:LineString/b:coordinates', namespaces=namespaces):
             for coordinate in section.text.split(' '):
                 lat, lon = coordinate.split(',')
                 file.write(coordinate + '\n')
-    file.write('Fence\n')
+            file.write('\n')
     for item in root.findall('./b:Document/b:Folder//b:name[.="Fence"]...', namespaces=namespaces):
         for section in item.findall('b:MultiGeometry/b:LineString/b:coordinates', namespaces=namespaces):
             for coordinate in section.text.split(' '):
                 lat, lon = coordinate.split(',')
                 file.write(coordinate + '\n')
-with open('../rhbbodydisplay/data/points.csv', 'w') as file:
-    file.write('Toilets\n')
+            file.write('\n')
+with open('../rhbbodydisplay/data/toilets.csv', 'w') as file:
     for item in root.findall('./b:Document/b:Folder//b:name[.="Toilets"]...', namespaces=namespaces):
         for section in item.findall('b:Placemark/b:Point/b:coordinates', namespaces=namespaces):
             for coordinate in section.text.split(' '):
                 lat, lon = coordinate.split(',')
                 file.write(coordinate + '\n')
-    file.write('First Aid\n')
+with open('../rhbbodydisplay/data/first_aid.csv', 'w') as file:
     for item in root.xpath('./b:Document/b:Folder//b:name[contains(text(),"First")]/..', namespaces=namespaces):
+        for section in item.xpath('./b:Point/b:coordinates', namespaces=namespaces):
+            for coordinate in section.text.split(' '):
+                lat, lon = coordinate.split(',')
+                file.write(coordinate + '\n')
+with open('../rhbbodydisplay/data/ranger.csv', 'w') as file:
+    for item in root.xpath('./b:Document/b:Folder//b:name[contains(text(),"Ranger")]/..', namespaces=namespaces):
         for section in item.xpath('./b:Point/b:coordinates', namespaces=namespaces):
             for coordinate in section.text.split(' '):
                 lat, lon = coordinate.split(',')

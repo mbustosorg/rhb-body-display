@@ -20,18 +20,28 @@ OscP5 oscP5;
 WebMercator proj = new WebMercator();
 
 ArrayList<PVector>coords;  
+ArrayList<PVector>firstAid;
+ArrayList<PVector>toilets;  
+ArrayList<PVector>ranger;  
+
 PVector tlCorner, brCorner;
 
 float heading = 0.0;
 int pressure = 0;
-float lat = 0.0;
-float lon = 0.0;
+float lon = -119.21;
+float lat = 40.79;
 
 PImage backgroundMap;
 
 void setup() {
   coords = new ArrayList<PVector>();  
+  firstAid = new ArrayList<PVector>();  
+  toilets = new ArrayList<PVector>();  
+  ranger = new ArrayList<PVector>();  
   setupGeo();
+  setupPOI("toilets", toilets);
+  setupPOI("first_aid", firstAid);
+  setupPOI("ranger", ranger);
   int wide = int(abs((tlCorner.x - brCorner.x) / abs(tlCorner.y - brCorner.y) * 1000));
   print(wide);
   size(820, 1000);
@@ -46,10 +56,31 @@ void draw() {
   textSize(32);  
   fill(0);
   for (int i = 0; i < coords.size() - 1; i++) {
-    PVector startCoord = geoToScreen(coords.get(i));
-    PVector endCoord = geoToScreen(coords.get(i + 1));
-    line(startCoord.x, startCoord.y, endCoord.x, endCoord.y);
+    if (coords.get(i).x != 0 && coords.get(i + 1).x != 0) {
+      PVector startCoord = geoToScreen(coords.get(i));
+      PVector endCoord = geoToScreen(coords.get(i + 1));
+      line(startCoord.x, startCoord.y, endCoord.x, endCoord.y);
+    }
   }
+  stroke(0);
+  fill(0, 0, 255);
+  for (int i = 0; i < toilets.size(); i++) {
+    PVector coord = geoToScreen(toilets.get(i));
+    circle(coord.x, coord.y, 10);
+  }
+  fill(0, 255, 0);
+  for (int i = 0; i < firstAid.size(); i++) {
+    PVector coord = geoToScreen(firstAid.get(i));
+    circle(coord.x, coord.y, 10);
+  }
+  fill(150, 75, 0);
+  for (int i = 0; i < ranger.size(); i++) {
+    PVector coord = geoToScreen(ranger.get(i));
+    circle(coord.x, coord.y, 10);
+  }
+  stroke(40);
+  textSize(32);  
+  fill(0);
   text("Lat: " + str(lat), 10, 30);
   text("Lon: " + str(lon), 10, 60);
   text("Pressure: " + str(pressure), 10, 90);
@@ -57,17 +88,32 @@ void draw() {
   PVector rhb = geoToScreen(proj.transformCoords(new PVector(lon, lat)));
   fill(#FF0000);
   rectMode(CENTER);
-  translate(rhb.x, rhb.y);
+  translate(rhb.y, rhb.x);
   rotate(radians(heading)); 
   square(0, 0, 10);
 }
 
 // Setup coordinate boundaries of the displayed map
-void setupGeo() {
-  String[] geoCoords = loadStrings("/Users/mauricio/Documents/development/git/kml_parsing/streets.csv");
-
+void setupPOI(String name, ArrayList<PVector> list) {
+  String[] geoCoords = loadStrings(name + ".csv");
   WebMercator proj = new WebMercator();
+  for (String line : geoCoords)
+  {
+    if (line.length() > 0) {
+      String[] geoCoord = split(line.trim(), ",");
+      if (geoCoord.length > 1) {
+        float lng = float(geoCoord[0]);
+        float lat = float(geoCoord[1]);
+        list.add(proj.transformCoords(new PVector(lng, lat)));
+      }
+    }
+  }
+}
 
+// Setup coordinate boundaries of the displayed map
+void setupGeo() {
+  String[] geoCoords = loadStrings("lines.csv");
+  WebMercator proj = new WebMercator();
   // Convert the GPS coordinates from lat/long to WebMercator
   float left = 0.0;
   float upper = 0.0;
@@ -75,19 +121,21 @@ void setupGeo() {
   float lower = 999.0;
   for (String line : geoCoords)
   {
-    if (line == "") {
+    if (line.length() > 0) {
       String[] geoCoord = split(line.trim(), ",");
-      float lng = float(geoCoord[0]);
-      float lat = float(geoCoord[1]);
-      left = min(left, lng);
-      upper = max(upper, lat);
-      right = max(right, lng);
-      lower = min(lower, lat);
-      coords.add(proj.transformCoords(new PVector(lng, lat)));
-    }
+      if (geoCoord.length > 1) {
+        float lng = float(geoCoord[0]);
+        float lat = float(geoCoord[1]);
+        left = min(left, lng);
+        upper = max(upper, lat);
+        right = max(right, lng);
+        lower = min(lower, lat);
+        coords.add(proj.transformCoords(new PVector(lng, lat)));
+      }
+    } else coords.add(new PVector(0.0, 0.0));
   } 
-  tlCorner = proj.transformCoords(new PVector(left, upper));
-  brCorner = proj.transformCoords(new PVector(right, lower));
+  tlCorner = proj.transformCoords(new PVector(left - 0.01, upper + 0.01));
+  brCorner = proj.transformCoords(new PVector(right + 0.01, lower - 0.01));
 }
 
 // Handle the IM JSON document update
