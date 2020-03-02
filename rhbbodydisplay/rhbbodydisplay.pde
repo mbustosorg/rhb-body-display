@@ -24,12 +24,16 @@ ArrayList<PVector>firstAid;
 ArrayList<PVector>toilets;  
 ArrayList<PVector>ranger;  
 
+ArrayList<PVector>track;
+
 PVector tlCorner, brCorner;
 
 float heading = 0.0;
 int pressure = 0;
-float lon = -119.21;
-float lat = 40.79;
+float lon = 0.0;
+float lat = 0.0;
+float ORIGIN_LON = -119.21;
+float ORIGIN_LAT = 40.79;
 
 PImage backgroundMap;
 
@@ -37,11 +41,14 @@ void setup() {
   coords = new ArrayList<PVector>();  
   firstAid = new ArrayList<PVector>();  
   toilets = new ArrayList<PVector>();  
-  ranger = new ArrayList<PVector>();  
+  ranger = new ArrayList<PVector>();
+  track = new ArrayList<PVector>();
+  
   setupGeo();
   setupPOI("toilets", toilets);
   setupPOI("first_aid", firstAid);
   setupPOI("ranger", ranger);
+  
   int wide = int(abs((tlCorner.x - brCorner.x) / abs(tlCorner.y - brCorner.y) * 1000));
   print(wide);
   size(820, 1000);
@@ -78,13 +85,18 @@ void draw() {
     PVector coord = geoToScreen(ranger.get(i));
     circle(coord.x, coord.y, 10);
   }
+  fill(0);
+  for (int i = 0; i < track.size(); i++) {
+    PVector coord = geoToScreen(track.get(i));
+    circle(coord.x, coord.y, 3);
+  }
   stroke(40);
   textSize(32);  
   fill(0);
-  text("Lat: " + str(lat), 10, 30);
-  text("Lon: " + str(lon), 10, 60);
+  text("Lat: " + str(int(lat * 100) / 100.0), 10, 30);
+  text("Lon: " + str(int(lon * 100) / 100.0), 10, 60);
   text("Pressure: " + str(pressure), 10, 90);
-  text("Heading: " + str(heading), 10, 120);
+  text("Heading: " + str(int(heading)), 10, 120);
   PVector rhb = geoToScreen(proj.transformCoords(new PVector(lon, lat)));
   fill(#FF0000);
   rectMode(CENTER);
@@ -155,8 +167,13 @@ void handlePressure(int new_pressure) {
 
 // Handle the position update
 void handlePosition(float new_lat, float new_lon) {
-  lat = new_lat;
-  lon = new_lon;
+  if (lon == 0.0) {
+    ORIGIN_LAT = ORIGIN_LAT - new_lat;
+    ORIGIN_LON = ORIGIN_LON - new_lon;
+  }
+  lat = new_lat + ORIGIN_LAT;
+  lon = new_lon + ORIGIN_LON;
+  track.add(proj.transformCoords(new PVector(lon, lat)));
 }
 
 // Handle a new OSC message
