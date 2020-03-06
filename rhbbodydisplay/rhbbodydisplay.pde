@@ -30,6 +30,7 @@ PVector tlCorner, brCorner;
 
 float heading = 0.0;
 int pressure = 0;
+float temperature = 0.0;
 float lon = 0.0;
 float lat = 0.0;
 float ORIGIN_LON = -119.21;
@@ -85,10 +86,11 @@ void draw() {
     PVector coord = geoToScreen(ranger.get(i));
     circle(coord.x, coord.y, 10);
   }
-  fill(0);
+  fill(150);
+  noStroke();
   for (int i = 0; i < track.size(); i++) {
     PVector coord = geoToScreen(track.get(i));
-    circle(coord.x, coord.y, 3);
+    circle(coord.y, coord.x, 1);
   }
   stroke(40);
   textSize(32);  
@@ -97,6 +99,7 @@ void draw() {
   text("Lon: " + str(int(lon * 100) / 100.0), 10, 60);
   text("Pressure: " + str(pressure), 10, 90);
   text("Heading: " + str(int(heading)), 10, 120);
+  text("Bath: " + str(int(temperature)), 10, 150);
   PVector rhb = geoToScreen(proj.transformCoords(new PVector(lon, lat)));
   fill(#FF0000);
   rectMode(CENTER);
@@ -114,9 +117,9 @@ void setupPOI(String name, ArrayList<PVector> list) {
     if (line.length() > 0) {
       String[] geoCoord = split(line.trim(), ",");
       if (geoCoord.length > 1) {
-        float lng = float(geoCoord[0]);
+        float lon = float(geoCoord[0]);
         float lat = float(geoCoord[1]);
-        list.add(proj.transformCoords(new PVector(lng, lat)));
+        list.add(proj.transformCoords(new PVector(lon, lat)));
       }
     }
   }
@@ -136,13 +139,13 @@ void setupGeo() {
     if (line.length() > 0) {
       String[] geoCoord = split(line.trim(), ",");
       if (geoCoord.length > 1) {
-        float lng = float(geoCoord[0]);
+        float lon = float(geoCoord[0]);
         float lat = float(geoCoord[1]);
-        left = min(left, lng);
+        left = min(left, lon);
         upper = max(upper, lat);
-        right = max(right, lng);
+        right = max(right, lon);
         lower = min(lower, lat);
-        coords.add(proj.transformCoords(new PVector(lng, lat)));
+        coords.add(proj.transformCoords(new PVector(lon, lat)));
       }
     } else coords.add(new PVector(0.0, 0.0));
   } 
@@ -165,6 +168,11 @@ void handlePressure(int new_pressure) {
   pressure = new_pressure;
 }
 
+// Handle the new pressure value
+void handleTemperature(float new_temperature) {
+  temperature = new_temperature;
+}
+
 // Handle the position update
 void handlePosition(float new_lat, float new_lon) {
   if (lon == 0.0) {
@@ -182,6 +190,7 @@ void oscEvent(OscMessage theOscMessage) {
     String message = theOscMessage.addrPattern();
     if (message.equals("/imu")) handleImu(theOscMessage.get(0).stringValue());
     else if (message.equals("/pressure")) handlePressure(theOscMessage.get(0).intValue());
+    else if (message.equals("/temperature")) handleTemperature(theOscMessage.get(0).floatValue());
     else if (message.equals("/position")) handlePosition(theOscMessage.get(0).floatValue(), theOscMessage.get(1).floatValue());
   } 
   catch (Exception e) {
