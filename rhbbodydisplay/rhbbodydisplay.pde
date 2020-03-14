@@ -29,10 +29,11 @@ ArrayList<PVector>track;
 PVector tlCorner, brCorner;
 
 float heading = 0.0;
-int pressure = 0;
-float temperature = 0.0;
+float pressure = 0;
+float temperature = 40.0;
 float lon = 0.0;
 float lat = 0.0;
+float free_disk = 1.0;
 float ORIGIN_LON = -119.21;
 float ORIGIN_LAT = 40.79;
 
@@ -48,17 +49,19 @@ void setup() {
   setupGeo();
   setupPOI("toilets", toilets);
   setupPOI("first_aid", firstAid);
-  setupPOI("ranger", ranger);
+  //setupPOI("ranger", ranger);
   
   int wide = int(abs((tlCorner.x - brCorner.x) / abs(tlCorner.y - brCorner.y) * 1000));
   print(wide);
   size(820, 1000);
   frameRate(25);
   oscP5 = new OscP5(this, 10002);
+  frameRate(10);
 }
 
 void draw() {
   background(202, 226, 245);
+  
   fill(206, 173, 146);
   stroke(40);
   textSize(32);  
@@ -95,17 +98,34 @@ void draw() {
   stroke(40);
   textSize(32);  
   fill(0);
-  text("Lat: " + str(int(lat * 100) / 100.0), 10, 30);
-  text("Lon: " + str(int(lon * 100) / 100.0), 10, 60);
-  text("Pressure: " + str(pressure), 10, 90);
-  text("Heading: " + str(int(heading)), 10, 120);
-  text("Bath: " + str(int(temperature)), 10, 150);
+  //text("Lat: " + str(int(lat * 100) / 100.0), 10, 30);
+  //text("Lon: " + str(int(lon * 100) / 100.0), 10, 64);
+  text("Pressure: " + str(pressure), 10, 98);
+  rotarySlider(30, 40, 40, -5000, 20000, pressure);
+  //text("Heading: " + str(int(heading)), 10, 132);
+  text("Bath: " + str(int(temperature)), 10, 132);
+  rotarySlider(80, 40, 40, 20, 120, temperature);
+  text("Free: " + str(int(free_disk)), 10, 166);
+  rotarySlider(130, 40, 40, 0, 1, free_disk);
   PVector rhb = geoToScreen(proj.transformCoords(new PVector(lon, lat)));
   fill(#FF0000);
   rectMode(CENTER);
   translate(rhb.y, rhb.x);
   rotate(radians(heading)); 
-  square(0, 0, 10);
+  rect(0, 0, 10, 30, 6);
+}
+
+// Draw a rotary slider
+void rotarySlider(float x, float y, float diameter, float lower, float upper, float level) {
+  float ratio = (level - lower) / (upper - lower);
+  ratio = max(min(ratio, 1.0), 0.0);
+  noStroke();
+  fill(255, 0, 0);
+  ellipse(x, y, diameter, diameter);
+  fill(202, 226, 245);
+  arc(x, y, diameter + 10, diameter + 10, PI / 4 - (3 * PI / 2) * (1.0 - ratio), 3 * PI / 4);
+  ellipse(x, y, diameter / 2, diameter / 2);
+  fill(0);
 }
 
 // Setup coordinate boundaries of the displayed map
@@ -164,7 +184,7 @@ void handleImu(String imu) {
 }
 
 // Handle the new pressure value
-void handlePressure(int new_pressure) {
+void handlePressure(float new_pressure) {
   pressure = new_pressure;
 }
 
@@ -174,14 +194,26 @@ void handleTemperature(float new_temperature) {
 }
 
 // Handle the position update
-void handlePosition(float new_lat, float new_lon) {
+void handleLat(float new_lat) {
   if (lon == 0.0) {
     ORIGIN_LAT = ORIGIN_LAT - new_lat;
-    ORIGIN_LON = ORIGIN_LON - new_lon;
   }
   lat = new_lat + ORIGIN_LAT;
+  track.add(proj.transformCoords(new PVector(lon, lat)));
+}
+
+// Handle the position update
+void handleLon(float new_lon) {
+  if (lon == 0.0) {
+    ORIGIN_LON = ORIGIN_LON - new_lon;
+  }
   lon = new_lon + ORIGIN_LON;
   track.add(proj.transformCoords(new PVector(lon, lat)));
+}
+
+// Handle the free disk update
+void handleFreeDisk(float new_free) {
+  free_disk = new_free;
 }
 
 // Handle a new OSC message
@@ -189,9 +221,11 @@ void oscEvent(OscMessage theOscMessage) {
   try {
     String message = theOscMessage.addrPattern();
     if (message.equals("/imu")) handleImu(theOscMessage.get(0).stringValue());
-    else if (message.equals("/pressure")) handlePressure(theOscMessage.get(0).intValue());
+    else if (message.equals("/pressure")) handlePressure(theOscMessage.get(0).floatValue());
     else if (message.equals("/temperature")) handleTemperature(theOscMessage.get(0).floatValue());
-    else if (message.equals("/position")) handlePosition(theOscMessage.get(0).floatValue(), theOscMessage.get(1).floatValue());
+    else if (message.equals("/position/lat")) handleLat(theOscMessage.get(0).floatValue());
+    else if (message.equals("/position/lon")) handleLon(theOscMessage.get(0).floatValue());
+    else if (message.equals("/free_disk")) handleFreeDisk(theOscMessage.get(0).floatValue());
   } 
   catch (Exception e) {
     println(e);
