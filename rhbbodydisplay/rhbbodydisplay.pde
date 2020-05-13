@@ -1,4 +1,4 @@
-/*
+'1;95;0c/*
     Copyright (C) 2020 Mauricio Bustos (m@bustos.org)
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -60,6 +60,10 @@ void setup() {
 }
 
 void draw() {
+
+  ORIGIN_LAT -= 0.00001;
+  ORIGIN_LON -= 0.00001;
+  
   background(202, 226, 245);
   
   fill(206, 173, 146);
@@ -100,13 +104,13 @@ void draw() {
   fill(0);
   //text("Lat: " + str(int(lat * 100) / 100.0), 10, 30);
   //text("Lon: " + str(int(lon * 100) / 100.0), 10, 64);
-  text("Pressure: " + str(pressure), 10, 98);
-  rotarySlider(30, 40, 40, -5000, 20000, pressure);
+  //text("Pressure: " + str(pressure), 10, 98);
+  rotarySlider(30, 200, 40, -3000, 12000, pressure);
   //text("Heading: " + str(int(heading)), 10, 132);
-  text("Bath: " + str(int(temperature)), 10, 132);
-  rotarySlider(80, 40, 40, 20, 120, temperature);
-  text("Free: " + str(int(free_disk)), 10, 166);
-  rotarySlider(130, 40, 40, 0, 1, free_disk);
+  //text("Bath: " + str(int(temperature)), 10, 132);
+  rotarySlider(100, 200, 40, 20, 120, temperature);
+  //text("Free: " + str(int(free_disk)), 10, 166);
+  rotarySlider(170, 200, 40, 0, 100, free_disk);
   PVector rhb = geoToScreen(proj.transformCoords(new PVector(lon, lat)));
   fill(#FF0000);
   rectMode(CENTER);
@@ -126,6 +130,10 @@ void rotarySlider(float x, float y, float diameter, float lower, float upper, fl
   arc(x, y, diameter + 10, diameter + 10, PI / 4 - (3 * PI / 2) * (1.0 - ratio), 3 * PI / 4);
   ellipse(x, y, diameter / 2, diameter / 2);
   fill(0);
+  String s = str(level);;
+  float sw = textWidth(s);
+  textSize(10);
+  text(s, x - sw / 2, y);
 }
 
 // Setup coordinate boundaries of the displayed map
