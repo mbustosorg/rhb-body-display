@@ -1,4 +1,4 @@
-'1;95;0c/*
+/*
     Copyright (C) 2020 Mauricio Bustos (m@bustos.org)
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -34,8 +34,12 @@ float temperature = 40.0;
 float lon = 0.0;
 float lat = 0.0;
 float free_disk = 1.0;
-float ORIGIN_LON = -119.21;
-float ORIGIN_LAT = 40.79;
+float translate_lon = 0.0;
+float translate_lat = 0.0;
+float ORIGIN_LON = -119.20221909051635;
+float ORIGIN_LAT = 40.789975779898825;
+float OAKLAND_LON = -122.2537901;
+float OAKLAND_LAT = 37.8504158;
 
 PImage backgroundMap;
 
@@ -49,7 +53,7 @@ void setup() {
   setupGeo();
   setupPOI("toilets", toilets);
   setupPOI("first_aid", firstAid);
-  //setupPOI("ranger", ranger);
+  setupPOI("ranger", ranger);
   
   int wide = int(abs((tlCorner.x - brCorner.x) / abs(tlCorner.y - brCorner.y) * 1000));
   print(wide);
@@ -61,8 +65,8 @@ void setup() {
 
 void draw() {
 
-  ORIGIN_LAT -= 0.00001;
-  ORIGIN_LON -= 0.00001;
+  //translate_lon -= 0.00001;
+  //translate_lat -= 0.00001;
   
   background(202, 226, 245);
   
@@ -100,21 +104,21 @@ void draw() {
     circle(coord.y, coord.x, 1);
   }
   stroke(40);
-  textSize(32);  
+  textSize(15);
   fill(0);
-  //text("Lat: " + str(int(lat * 100) / 100.0), 10, 30);
-  //text("Lon: " + str(int(lon * 100) / 100.0), 10, 64);
+  text("Lat: " + str(int(lat * 10000) / 10000.0), 30, 250);
+  text("Lon: " + str(int(lon * 10000) / 10000.0), 30, 275);
+  text("Heading: " + str(int(heading)), 30, 300);
   //text("Pressure: " + str(pressure), 10, 98);
   rotarySlider(30, 200, 40, -3000, 12000, pressure);
-  //text("Heading: " + str(int(heading)), 10, 132);
   //text("Bath: " + str(int(temperature)), 10, 132);
   rotarySlider(100, 200, 40, 20, 120, temperature);
   //text("Free: " + str(int(free_disk)), 10, 166);
   rotarySlider(170, 200, 40, 0, 100, free_disk);
-  PVector rhb = geoToScreen(proj.transformCoords(new PVector(lon, lat)));
+  PVector rhb = geoToScreen(proj.transformCoords(new PVector(lon + translate_lon, lat + translate_lat)));
   fill(#FF0000);
   rectMode(CENTER);
-  translate(rhb.y, rhb.x);
+  translate(rhb.x, rhb.y);
   rotate(radians(heading)); 
   rect(0, 0, 10, 30, 6);
 }
@@ -203,19 +207,13 @@ void handleTemperature(float new_temperature) {
 
 // Handle the position update
 void handleLat(float new_lat) {
-  if (lon == 0.0) {
-    ORIGIN_LAT = ORIGIN_LAT - new_lat;
-  }
-  lat = new_lat + ORIGIN_LAT;
+  lat = new_lat + (ORIGIN_LAT - OAKLAND_LAT);
   track.add(proj.transformCoords(new PVector(lon, lat)));
 }
 
 // Handle the position update
 void handleLon(float new_lon) {
-  if (lon == 0.0) {
-    ORIGIN_LON = ORIGIN_LON - new_lon;
-  }
-  lon = new_lon + ORIGIN_LON;
+  lon = new_lon + (ORIGIN_LON - OAKLAND_LON);
   track.add(proj.transformCoords(new PVector(lon, lat)));
 }
 
