@@ -36,10 +36,12 @@ float lat = 0.0;
 float free_disk = 1.0;
 float translate_lon = 0.0;
 float translate_lat = 0.0;
-float ORIGIN_LON = -119.20221909051635;
-float ORIGIN_LAT = 40.789975779898825;
+float ORIGIN_LON =  -119.2175207;
+float ORIGIN_LAT = 40.7851999;
 float OAKLAND_LON = -122.2537901;
 float OAKLAND_LAT = 37.8504158;
+//float OAKLAND_LON = ORIGIN_LON;
+//float OAKLAND_LAT = ORIGIN_LAT;
 
 PImage backgroundMap;
 
@@ -56,11 +58,19 @@ void setup() {
   setupPOI("ranger", ranger);
   
   int wide = int(abs((tlCorner.x - brCorner.x) / abs(tlCorner.y - brCorner.y) * 1000));
-  print(wide);
-  size(820, 1000);
+  fullScreen();
+  //size(500, 1000);
   frameRate(25);
   oscP5 = new OscP5(this, 10002);
   frameRate(10);
+  
+  //Table table = loadTable("/Users/mauricio/Downloads/pos/positions_20220824_12.csv", "header");
+  //for (TableRow row : table.rows()) {
+  //  float lat = row.getFloat("lat");
+  //  float lon = row.getFloat("lon");
+  //  track.add(proj.transformCoords(new PVector(lon, lat)));
+  //}
+  colorMode(RGB, 255);
 }
 
 void draw() {
@@ -70,7 +80,6 @@ void draw() {
   
   background(202, 226, 245);
   
-  fill(206, 173, 146);
   stroke(40);
   textSize(32);  
   fill(0);
@@ -97,30 +106,31 @@ void draw() {
     PVector coord = geoToScreen(ranger.get(i));
     circle(coord.x, coord.y, 10);
   }
-  fill(150);
+  fill(200, 0, 200);
   noStroke();
   for (int i = 0; i < track.size(); i++) {
     PVector coord = geoToScreen(track.get(i));
-    circle(coord.y, coord.x, 1);
+    circle(coord.y, coord.x, 2);
   }
   stroke(40);
-  textSize(15);
+  textSize(60);
   fill(0);
-  text("Lat: " + str(int(lat * 10000) / 10000.0), 30, 250);
-  text("Lon: " + str(int(lon * 10000) / 10000.0), 30, 275);
-  text("Heading: " + str(int(heading)), 30, 300);
+  text("Lat: " + str(int(lat * 10000) / 10000.0), 30, 800);
+  text("Lon: " + str(int(lon * 10000) / 10000.0), 30, 890);
+  text("Heading: " + str(int(heading)), 30, 980);
   //text("Pressure: " + str(pressure), 10, 98);
-  rotarySlider(30, 200, 40, -3000, 12000, pressure);
+  rotarySlider(150, 150, 200, 1300, 2200, pressure);
   //text("Bath: " + str(int(temperature)), 10, 132);
-  rotarySlider(100, 200, 40, 20, 120, temperature);
-  //text("Free: " + str(int(free_disk)), 10, 166);
-  rotarySlider(170, 200, 40, 0, 100, free_disk);
+  rotarySlider(150, 350, 200, 20, 120, temperature);
+  //text("Free: " + str(i8t(free_disk)), 10, 166);
+  //rotarySlider(150, 520, 200, 0, 100, free_disk);
   PVector rhb = geoToScreen(proj.transformCoords(new PVector(lon + translate_lon, lat + translate_lat)));
   fill(#FF0000);
   rectMode(CENTER);
   translate(rhb.x, rhb.y);
   rotate(radians(heading)); 
-  rect(0, 0, 10, 30, 6);
+  rect(0, 0, 10, 30);
+  circle(0, 15, 10); 
 }
 
 // Draw a rotary slider
@@ -134,10 +144,10 @@ void rotarySlider(float x, float y, float diameter, float lower, float upper, fl
   arc(x, y, diameter + 10, diameter + 10, PI / 4 - (3 * PI / 2) * (1.0 - ratio), 3 * PI / 4);
   ellipse(x, y, diameter / 2, diameter / 2);
   fill(0);
-  String s = str(level);;
+  String s = str(int(level));;
   float sw = textWidth(s);
-  textSize(10);
-  text(s, x - sw / 2, y);
+  textSize(85);
+  text(s, x - sw / 2, y + 20);
 }
 
 // Setup coordinate boundaries of the displayed map
@@ -200,6 +210,11 @@ void handlePressure(float new_pressure) {
   pressure = new_pressure;
 }
 
+// Handle the new heading value
+void handleHeading(float new_heading) {
+  heading = new_heading;
+}
+
 // Handle the new pressure value
 void handleTemperature(float new_temperature) {
   temperature = new_temperature;
@@ -227,6 +242,7 @@ void oscEvent(OscMessage theOscMessage) {
   try {
     String message = theOscMessage.addrPattern();
     if (message.equals("/imu")) handleImu(theOscMessage.get(0).stringValue());
+    else if (message.equals("/heading")) handleHeading(theOscMessage.get(0).floatValue());
     else if (message.equals("/pressure")) handlePressure(theOscMessage.get(0).floatValue());
     else if (message.equals("/temperature")) handleTemperature(theOscMessage.get(0).floatValue());
     else if (message.equals("/position/lat")) handleLat(theOscMessage.get(0).floatValue());
