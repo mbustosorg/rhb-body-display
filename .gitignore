@@ -3,3 +3,5 @@ libraries/
 __pycache__
 .DS_store
 .idea
+
+positions/

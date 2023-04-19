@@ -25,23 +25,28 @@ ArrayList<PVector>toilets;
 ArrayList<PVector>ranger;  
 
 ArrayList<PVector>track;
+FloatList track_pressure;
+FloatList track_temperature;
 
 PVector tlCorner, brCorner;
 
 float heading = 0.0;
-float pressure = 0;
+float pressure = 14;
 float temperature = 40.0;
 float lon = 0.0;
 float lat = 0.0;
 float free_disk = 1.0;
 float translate_lon = 0.0;
 float translate_lat = 0.0;
-float ORIGIN_LON =  -119.2175207;
-float ORIGIN_LAT = 40.7851999;
+//float ORIGIN_LON =  -119.2175207;
+//float ORIGIN_LAT = 40.7851999;
+float ORIGIN_LON = -119.2544;
+float ORIGIN_LAT = 40.7658;
 float OAKLAND_LON = -122.2537901;
 float OAKLAND_LAT = 37.8504158;
-//float OAKLAND_LON = ORIGIN_LON;
-//float OAKLAND_LAT = ORIGIN_LAT;
+
+int lastSecond = 0;
+boolean testing = false;
 
 PImage backgroundMap;
 
@@ -51,6 +56,11 @@ void setup() {
   toilets = new ArrayList<PVector>();  
   ranger = new ArrayList<PVector>();
   track = new ArrayList<PVector>();
+  track_pressure = new FloatList();
+  track_pressure.append(50.0);
+  track_temperature = new FloatList();
+  track_temperature.append(13.0);
+  track.add(proj.transformCoords(new PVector(ORIGIN_LON, ORIGIN_LAT)));
   
   setupGeo();
   setupPOI("toilets", toilets);
@@ -64,19 +74,33 @@ void setup() {
   oscP5 = new OscP5(this, 10002);
   frameRate(10);
   
-  //Table table = loadTable("/Users/mauricio/Downloads/pos/positions_20220824_12.csv", "header");
-  //for (TableRow row : table.rows()) {
-  //  float lat = row.getFloat("lat");
-  //  float lon = row.getFloat("lon");
-  //  track.add(proj.transformCoords(new PVector(lon, lat)));
+  testing = true;
+  //try {
+  //  Table table = loadTable("/Users/mauricio/Documents/development/projects/rhb-body-display/rhbbodydisplay/positions/positions_20230403.csv", "header");
+  //  for (TableRow row : table.rows()) {
+  //    float lat = row.getFloat("lat") + (ORIGIN_LAT - OAKLAND_LAT);
+  //    float lon = row.getFloat("lon") + (ORIGIN_LON - OAKLAND_LON);
+  //    track.add(proj.transformCoords(new PVector(lon, lat)));
+  //  }
+  //  testing = true;
+  //} catch (Exception e) {
   //}
   colorMode(RGB, 255);
 }
 
 void draw() {
 
-  //translate_lon -= 0.00001;
-  //translate_lat -= 0.00001;
+  if (testing) {
+    if (lastSecond != second()) {
+      lastSecond = second();
+      println(lastSecond);
+      PVector sim_track = track.get(0);
+      int elapsed = millis() / 1000;
+      float lat = sim_track.x + sin(float(elapsed) / 60.0) * float(elapsed) / 10.0;
+      float lon = sim_track.y - cos(float(elapsed) / 60.0) * float(elapsed) / 10.0;
+      track.add(new PVector(lat, lon));
+    }
+  }
   
   background(202, 226, 245);
   
@@ -110,8 +134,10 @@ void draw() {
   noStroke();
   for (int i = 0; i < track.size(); i++) {
     PVector coord = geoToScreen(track.get(i));
-    circle(coord.y, coord.x, 2);
+    circle(coord.x, coord.y, 2);
   }
+  sparkline(310, 150, 150, 50, 0, 100, track_pressure);
+  sparkline(310, 350, 150, 50, 0, 120, track_temperature);
   stroke(40);
   textSize(60);
   fill(0);
@@ -119,7 +145,7 @@ void draw() {
   text("Lon: " + str(int(lon * 10000) / 10000.0), 30, 890);
   text("Heading: " + str(int(heading)), 30, 980);
   //text("Pressure: " + str(pressure), 10, 98);
-  rotarySlider(150, 150, 200, 1300, 2200, pressure);
+  rotarySlider(150, 150, 200, 10, 80, pressure);
   //text("Bath: " + str(int(temperature)), 10, 132);
   rotarySlider(150, 350, 200, 20, 120, temperature);
   //text("Free: " + str(i8t(free_disk)), 10, 166);
@@ -131,6 +157,23 @@ void draw() {
   rotate(radians(heading)); 
   rect(0, 0, 10, 30);
   circle(0, 15, 10); 
+}
+
+// Draw a sparkline for a dataset
+void sparkline(int x, int y, int wide, int tall, float minimum, float maximum, FloatList data) {
+  fill(#EFFFEF);
+  stroke(#777777);
+  strokeWeight(3);
+  rect(x, y, wide, tall);
+  fill(#0000FF);
+  stroke(#0000FF);
+  strokeWeight(1);
+  float vertical_range = maximum - minimum;
+  for (int i = 0; i < data.size(); i++) {
+    float value = data.get(i);
+    float screen_y = y + tall / 2.0 - (value - minimum) / vertical_range * tall;
+    circle(x - wide/2.0 + i * wide / data.size(), screen_y, 2);
+  }
 }
 
 // Draw a rotary slider
@@ -147,7 +190,8 @@ void rotarySlider(float x, float y, float diameter, float lower, float upper, fl
   String s = str(int(level));;
   float sw = textWidth(s);
   textSize(85);
-  text(s, x - sw / 2, y + 20);
+  //text(s, x - sw / 2, y + 20);
+  text(s, x - 38, y + 20);
 }
 
 // Setup coordinate boundaries of the displayed map
@@ -191,8 +235,8 @@ void setupGeo() {
       }
     } else coords.add(new PVector(0.0, 0.0));
   } 
-  tlCorner = proj.transformCoords(new PVector(left - 0.01, upper + 0.01));
-  brCorner = proj.transformCoords(new PVector(right + 0.01, lower - 0.01));
+  tlCorner = proj.transformCoords(new PVector(left - 0.015, upper + 0.003));
+  brCorner = proj.transformCoords(new PVector(right + 0.015, lower - 0.003));
 }
 
 // Handle the IM JSON document update
@@ -208,6 +252,8 @@ void handleImu(String imu) {
 // Handle the new pressure value
 void handlePressure(float new_pressure) {
   pressure = new_pressure;
+  if (track_pressure.size() > 500) track_pressure.remove(0);
+  track_pressure.append(pressure);
 }
 
 // Handle the new heading value
@@ -218,6 +264,8 @@ void handleHeading(float new_heading) {
 // Handle the new pressure value
 void handleTemperature(float new_temperature) {
   temperature = new_temperature;
+  if (track_temperature.size() > 50) track_temperature.remove(0);
+  track_temperature.append(temperature);
 }
 
 // Handle the position update
