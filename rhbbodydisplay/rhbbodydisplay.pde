@@ -36,6 +36,10 @@ float temperature = 40.0;
 float lon = 0.0;
 float lat = 0.0;
 float free_disk = 1.0;
+float water_heater = 0.0;
+float lower_temp = 70.0;
+float upper_temp = 75.0;
+float engine = 0.0;
 float translate_lon = 0.0;
 float translate_lat = 0.0;
 //float ORIGIN_LON =  -119.2175207;
@@ -102,6 +106,8 @@ void draw() {
     }
   }
   
+  boolean flashOn = second() % 2 == 0;
+  
   background(202, 226, 245);
   
   stroke(40);
@@ -136,14 +142,33 @@ void draw() {
     PVector coord = geoToScreen(track.get(i));
     circle(coord.x, coord.y, 2);
   }
-  sparkline(310, 150, 150, 50, 0, 100, track_pressure);
-  sparkline(310, 350, 150, 50, 0, 120, track_temperature);
+  sparkline(310, 150, 150, 50, 0, 100, 30, 80, track_pressure);
+  sparkline(310, 350, 150, 50, 60, 85, lower_temp, upper_temp, track_temperature);
   stroke(40);
   textSize(60);
   fill(0);
-  text("Lat: " + str(int(lat * 10000) / 10000.0), 30, 800);
-  text("Lon: " + str(int(lon * 10000) / 10000.0), 30, 890);
-  text("Heading: " + str(int(heading)), 30, 980);
+  text("Heater:", 30, 800);
+  text("Engine:", 30, 860);
+  if (water_heater > 0.0) {
+    if (flashOn) {
+      fill(#FF0000);
+    }
+    text("ON", 250, 800);
+    fill(#000000);
+  } else {
+    text("OFF", 250, 800);
+  }
+  if (engine == 1.0) {
+    if (flashOn) {
+      fill(#FF0000);
+    }
+    text("ON", 250, 860);
+    fill(#000000);
+  } else {
+    text("OFF", 250, 860);
+  }
+  fill(#000000);
+  text(str(int(lat * 10000) / 10000.0) + ", " + str(int(lon * 10000) / 10000.0) + " @ " + str(int(heading)), 30, 920);
   //text("Pressure: " + str(pressure), 10, 98);
   rotarySlider(150, 150, 200, 10, 80, pressure);
   //text("Bath: " + str(int(temperature)), 10, 132);
@@ -160,18 +185,24 @@ void draw() {
 }
 
 // Draw a sparkline for a dataset
-void sparkline(int x, int y, int wide, int tall, float minimum, float maximum, FloatList data) {
+void sparkline(int x, int y, int wide, int tall, float minimum, float maximum, float lower, float upper, FloatList data) {
+  float vertical_range = maximum - minimum;
   fill(#EFFFEF);
   stroke(#777777);
-  strokeWeight(3);
+  strokeWeight(2);
   rect(x, y, wide, tall);
+  strokeWeight(1);
+  stroke(#00FF00);
+  float screen_y = y + tall / 2.0 - (upper - minimum) / vertical_range * tall;
+  line(x - wide / 2, screen_y, x + wide / 2, screen_y);
+  screen_y = y + tall / 2.0 - (lower - minimum) / vertical_range * tall;
+  line(x - wide / 2, screen_y, x + wide / 2, screen_y);
   fill(#0000FF);
   stroke(#0000FF);
   strokeWeight(1);
-  float vertical_range = maximum - minimum;
   for (int i = 0; i < data.size(); i++) {
     float value = data.get(i);
-    float screen_y = y + tall / 2.0 - (value - minimum) / vertical_range * tall;
+    screen_y = y + tall / 2.0 - (value - minimum) / vertical_range * tall;
     circle(x - wide/2.0 + i * wide / data.size(), screen_y, 2);
   }
 }
@@ -285,6 +316,26 @@ void handleFreeDisk(float new_free) {
   free_disk = new_free;
 }
 
+// Handle the water heater update
+void handleWaterHeater(float new_value) {
+  water_heater = new_value;
+}
+
+// Handle the lower water temp update
+void handleLowerTemp(float new_value) {
+  lower_temp = new_value;
+}
+
+// Handle the lower water temp update
+void handleUpperTemp(float new_value) {
+  upper_temp = new_value;
+}
+
+// Handle the engine status update
+void handleEngine(float new_value) {
+  engine = new_value;
+}
+
 // Handle a new OSC message
 void oscEvent(OscMessage theOscMessage) {
   try {
@@ -296,6 +347,10 @@ void oscEvent(OscMessage theOscMessage) {
     else if (message.equals("/position/lat")) handleLat(theOscMessage.get(0).floatValue());
     else if (message.equals("/position/lon")) handleLon(theOscMessage.get(0).floatValue());
     else if (message.equals("/free_disk")) handleFreeDisk(theOscMessage.get(0).floatValue());
+    else if (message.equals("/water_heater")) handleWaterHeater(theOscMessage.get(0).floatValue());
+    else if (message.equals("/lower_temp")) handleLowerTemp(theOscMessage.get(0).floatValue());
+    else if (message.equals("/upper_temp")) handleUpperTemp(theOscMessage.get(0).floatValue());
+    else if (message.equals("/engine")) handleEngine(theOscMessage.get(0).floatValue());
   } 
   catch (Exception e) {
     println(e);
