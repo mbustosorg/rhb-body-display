@@ -40,14 +40,20 @@ float water_heater = 0.0;
 float lower_temp = 70.0;
 float upper_temp = 75.0;
 float engine = 0.0;
+float moving = 0.0;
+float poof_count = 0.0;
 float translate_lon = 0.0;
 float translate_lat = 0.0;
 //float ORIGIN_LON =  -119.2175207;
 //float ORIGIN_LAT = 40.7851999;
-float ORIGIN_LON = -119.2544;
-float ORIGIN_LAT = 40.7658;
-float OAKLAND_LON = -122.2537901;
-float OAKLAND_LAT = 37.8504158;
+//float ORIGIN_LON = -119.2544;
+//float ORIGIN_LAT = 40.7658;
+//float OAKLAND_LON = -122.2537901;
+//float OAKLAND_LAT = 37.8504158;
+float ORIGIN_LON = 0.0;
+float ORIGIN_LAT = 0.0;
+float OAKLAND_LON = 0.0;
+float OAKLAND_LAT = 0.0;
 
 int lastSecond = 0;
 boolean testing = false;
@@ -78,7 +84,7 @@ void setup() {
   oscP5 = new OscP5(this, 10002);
   frameRate(10);
   
-  testing = true;
+  testing = false;
   //try {
   //  Table table = loadTable("/Users/mauricio/Documents/development/projects/rhb-body-display/rhbbodydisplay/positions/positions_20230403.csv", "header");
   //  for (TableRow row : table.rows()) {
@@ -97,7 +103,7 @@ void draw() {
   if (testing) {
     if (lastSecond != second()) {
       lastSecond = second();
-      println(lastSecond);
+      println("rhbbodydisplay: tick: " + lastSecond);
       PVector sim_track = track.get(0);
       int elapsed = millis() / 1000;
       float lat = sim_track.x + sin(float(elapsed) / 60.0) * float(elapsed) / 10.0;
@@ -105,70 +111,82 @@ void draw() {
       track.add(new PVector(lat, lon));
     }
   }
-  
-  boolean flashOn = second() % 2 == 0;
+  boolean flashOn = millis() - (millis() / 1000) * 1000.0 > 500.0;
   
   background(202, 226, 245);
   
   stroke(40);
   textSize(32);  
   fill(0);
+  int offset = 100;
   for (int i = 0; i < coords.size() - 1; i++) {
     if (coords.get(i).x != 0 && coords.get(i + 1).x != 0) {
       PVector startCoord = geoToScreen(coords.get(i));
       PVector endCoord = geoToScreen(coords.get(i + 1));
-      line(startCoord.x, startCoord.y, endCoord.x, endCoord.y);
+      line(startCoord.x + offset, startCoord.y, endCoord.x + offset, endCoord.y);
     }
   }
   stroke(0);
   fill(0, 0, 255);
   for (int i = 0; i < toilets.size(); i++) {
     PVector coord = geoToScreen(toilets.get(i));
-    circle(coord.x, coord.y, 10);
+    circle(coord.x + offset, coord.y, 10);
   }
   fill(0, 255, 0);
   for (int i = 0; i < firstAid.size(); i++) {
     PVector coord = geoToScreen(firstAid.get(i));
-    circle(coord.x, coord.y, 10);
+    circle(coord.x + offset, coord.y, 10);
   }
   fill(150, 75, 0);
   for (int i = 0; i < ranger.size(); i++) {
     PVector coord = geoToScreen(ranger.get(i));
-    circle(coord.x, coord.y, 10);
+    circle(coord.x + offset, coord.y, 10);
   }
   fill(200, 0, 200);
   noStroke();
   for (int i = 0; i < track.size(); i++) {
     PVector coord = geoToScreen(track.get(i));
-    circle(coord.x, coord.y, 2);
+    circle(coord.x + offset, coord.y, 2);
   }
   sparkline(310, 150, 150, 50, 0, 100, 30, 80, track_pressure);
   sparkline(310, 350, 150, 50, 60, 85, lower_temp, upper_temp, track_temperature);
   stroke(40);
   textSize(60);
   fill(0);
-  text("Heater:", 30, 800);
-  text("Engine:", 30, 860);
+  //if (moving > 0.0) {
+  //  if (flashOn) {
+  //    fill(#FF0000);
+  //  }
+  //  text("MOVING", 70, 790);
+  //  fill(#000000);
+  //} else {
+  //  text("STOPPED", 70, 790);
+  //}
+  text("Poofs:", 30, 560);
+  text(str(int(poof_count)), 250, 560);  
+  text("Heater:", 30, 620);
+  //text("Engine:", 30, 660);
   if (water_heater > 0.0) {
     if (flashOn) {
       fill(#FF0000);
     }
-    text("ON", 250, 800);
+    text("ON", 250, 620);
     fill(#000000);
   } else {
-    text("OFF", 250, 800);
-  }
-  if (engine == 1.0) {
-    if (flashOn) {
-      fill(#FF0000);
-    }
-    text("ON", 250, 860);
     fill(#000000);
-  } else {
-    text("OFF", 250, 860);
+    text("OFF", 250, 620);
   }
+  //if (engine == 1.0) {
+  // if (flashOn) {
+  //    fill(#FF0000);
+  //  }
+  //  text("ON", 250, 910);
+  //  fill(#000000);
+  //} else {
+  //  text("OFF", 250, 910);
+  //}
   fill(#000000);
-  text(str(int(lat * 10000) / 10000.0) + ", " + str(int(lon * 10000) / 10000.0) + " @ " + str(int(heading)), 30, 920);
+  text(cardinalFromHeading(heading) + " @ " + str(int(lat * 10000) / 10000.0) + ", " + str(int(lon * 10000) / 10000.0), 30, 680);
   //text("Pressure: " + str(pressure), 10, 98);
   rotarySlider(150, 150, 200, 10, 80, pressure);
   //text("Bath: " + str(int(temperature)), 10, 132);
@@ -178,10 +196,23 @@ void draw() {
   PVector rhb = geoToScreen(proj.transformCoords(new PVector(lon + translate_lon, lat + translate_lat)));
   fill(#FF0000);
   rectMode(CENTER);
-  translate(rhb.x, rhb.y);
+  translate(rhb.x + offset, rhb.y);
   rotate(radians(heading)); 
-  rect(0, 0, 10, 30);
-  circle(0, 15, 10); 
+  //rect(0, 0, 10, 30);
+  circle(0, 0, 15); 
+}
+
+//Cardinal direction from heading
+String cardinalFromHeading(float heading) {
+    if (heading >= 337.5 || heading < 22.5) return "N";
+    if (22.5 <= heading && heading < 67.5) return "NE";
+    if (67.5 <= heading && heading < 112.5) return "E";
+    if (112.5 <= heading && heading < 157.5) return "SE";
+    if (157.5 <= heading && heading < 202.5) return "S";
+    if (202.5 <= heading && heading < 247.5) return "SW";
+    if (247.5 <= heading && heading < 292.5) return "W";
+    if (292.5 <= heading && heading < 337.5) return "NW"; 
+    return "";
 }
 
 // Draw a sparkline for a dataset
@@ -191,8 +222,8 @@ void sparkline(int x, int y, int wide, int tall, float minimum, float maximum, f
   stroke(#777777);
   strokeWeight(2);
   rect(x, y, wide, tall);
-  strokeWeight(1);
-  stroke(#00FF00);
+  strokeWeight(2);
+  stroke(#FF00FF);
   float screen_y = y + tall / 2.0 - (upper - minimum) / vertical_range * tall;
   line(x - wide / 2, screen_y, x + wide / 2, screen_y);
   screen_y = y + tall / 2.0 - (lower - minimum) / vertical_range * tall;
@@ -276,7 +307,7 @@ void handleImu(String imu) {
   if (json == null) {
     println("JSONObject could not be parsed");
   } else {
-    heading = json.getJSONObject("heading").getFloat("heading");
+    heading = json.getJSONObject("heading").getFloat("heading") - 15.0;
   }
 }
 
@@ -289,7 +320,7 @@ void handlePressure(float new_pressure) {
 
 // Handle the new heading value
 void handleHeading(float new_heading) {
-  heading = new_heading;
+  heading = new_heading - 25.0;
 }
 
 // Handle the new pressure value
@@ -336,6 +367,16 @@ void handleEngine(float new_value) {
   engine = new_value;
 }
 
+// Handle the moving status update
+void handleMoving(float new_value) {
+  moving = new_value;
+}
+
+// Handle a poof count update
+void handlePoofCount(float new_value) {
+  poof_count = new_value;
+}
+
 // Handle a new OSC message
 void oscEvent(OscMessage theOscMessage) {
   try {
@@ -351,6 +392,8 @@ void oscEvent(OscMessage theOscMessage) {
     else if (message.equals("/lower_temp")) handleLowerTemp(theOscMessage.get(0).floatValue());
     else if (message.equals("/upper_temp")) handleUpperTemp(theOscMessage.get(0).floatValue());
     else if (message.equals("/engine")) handleEngine(theOscMessage.get(0).floatValue());
+    else if (message.equals("/moving")) handleMoving(theOscMessage.get(0).floatValue());
+    else if (message.equals("/poof_count")) handlePoofCount(theOscMessage.get(0).floatValue());
   } 
   catch (Exception e) {
     println(e);
