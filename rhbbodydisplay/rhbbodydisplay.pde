@@ -14,6 +14,11 @@
 
 import oscP5.*;
 import org.gicentre.utils.spatial.*;
+import java.util.Date;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.text.ParseException;
+import java.util.concurrent.TimeUnit;
 
 OscP5 oscP5;
 
@@ -48,8 +53,12 @@ float translate_lat = 0.0;
 //float ORIGIN_LAT = 40.7851999;
 //float ORIGIN_LON = -119.2544;
 //float ORIGIN_LAT = 40.7658;
+// Testing at home
+//float ORIGIN_LON =  -119.2175207;
+//float ORIGIN_LAT = 40.7851999;
 //float OAKLAND_LON = -122.2537901;
 //float OAKLAND_LAT = 37.8504158;
+// On playa
 float ORIGIN_LON = 0.0;
 float ORIGIN_LAT = 0.0;
 float OAKLAND_LON = 0.0;
@@ -84,17 +93,45 @@ void setup() {
   oscP5 = new OscP5(this, 10002);
   frameRate(10);
   
-  testing = false;
-  //try {
-  //  Table table = loadTable("/Users/mauricio/Documents/development/projects/rhb-body-display/rhbbodydisplay/positions/positions_20230403.csv", "header");
-  //  for (TableRow row : table.rows()) {
-  //    float lat = row.getFloat("lat") + (ORIGIN_LAT - OAKLAND_LAT);
-  //    float lon = row.getFloat("lon") + (ORIGIN_LON - OAKLAND_LON);
-  //    track.add(proj.transformCoords(new PVector(lon, lat)));
-  //  }
-  //  testing = true;
-  //} catch (Exception e) {
-  //}
+  //String home_directory = "/Users/mauricio/Documents/development/projects/rhb-body-display/rhbbodydisplay/positions";
+  String home_directory = "/home/pi/projects/rhb-sensor-monitor/data";
+  java.io.File folder = new java.io.File(home_directory);
+  
+  String[] filenames = folder.list();
+  Date now = new Date();
+  DateFormat parser = new SimpleDateFormat("'positions_'yyyyMMdd_hh_mm'.csv'");
+  DateFormat timestamp_parser = new SimpleDateFormat("yyyy-MM-dd'T'hh:mm:ss");  println(now);
+  for (int i = 0; i < filenames.length; i++) {
+    if (filenames[i].contains("positions")) {
+      try{
+        Date date = parser.parse(filenames[i]);
+        long diffInMillies = Math.abs(now.getTime() - date.getTime());
+        long diff = TimeUnit.DAYS.convert(diffInMillies, TimeUnit.MILLISECONDS);
+        if (diff < 2) {
+          println(filenames[i]);
+          Table table = loadTable(home_directory + "/" + filenames[i], "header");
+          for (TableRow row : table.rows()) {
+            //println(row.getString("timestamp").substring(0, 19));
+            try{
+              Date timestamp_date = timestamp_parser.parse(row.getString("timestamp").substring(0, 19));
+              long timestamp_diff = Math.abs(now.getTime() - timestamp_date.getTime());
+              long hours_diff = TimeUnit.HOURS.convert(timestamp_diff, TimeUnit.MILLISECONDS);
+              if (hours_diff < 12) {
+                float lat = row.getFloat("lat") + (ORIGIN_LAT - OAKLAND_LAT);
+                float lon = row.getFloat("lon") + (ORIGIN_LON - OAKLAND_LON);
+                track.add(proj.transformCoords(new PVector(lon, lat)));
+              }
+            } catch (Exception e) {
+              e.printStackTrace();
+            } 
+          }
+        }
+      } catch (Exception e) {
+        e.printStackTrace();
+      } 
+    }
+  }
+
   colorMode(RGB, 255);
 }
 
