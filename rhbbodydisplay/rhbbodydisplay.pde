@@ -107,7 +107,7 @@ void setup() {
         Date date = parser.parse(filenames[i]);
         long diffInMillies = Math.abs(now.getTime() - date.getTime());
         long diff = TimeUnit.DAYS.convert(diffInMillies, TimeUnit.MILLISECONDS);
-        if (diff < 2) {
+        if (diff < 3) {
           println(filenames[i]);
           Table table = loadTable(home_directory + "/" + filenames[i], "header");
           for (TableRow row : table.rows()) {
