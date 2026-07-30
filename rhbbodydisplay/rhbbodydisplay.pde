@@ -135,9 +135,9 @@ void setup() {
   frameRate(25);
   oscP5 = new OscP5(this, 10002);
   frameRate(10);
-  
-  String home_directory = "/Users/mauricio/Documents/development/projects/rhb-sensor-monitor/data-0828";
-  //String home_directory = "/home/pi/development/data";
+  /*
+  //String home_directory = "/Users/mauricio/Documents/development/projects/rhb-sensor-monitor/data-0828";
+  String home_directory = "/home/pi/development/data";
   java.io.File folder = new java.io.File(home_directory);
   
   String[] filenames = folder.list();
@@ -175,6 +175,7 @@ void setup() {
       } 
     }
   }
+  */
 
   colorMode(RGB, 255);
 }
