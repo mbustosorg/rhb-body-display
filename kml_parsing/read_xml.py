@@ -12,19 +12,24 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+import argparse
 import io
 import math
+import os
 import zipfile
 
 import lxml.etree
 
+HERE = os.path.dirname(os.path.abspath(__file__))
 SOURCE = '../rhbbodydisplay/data/brc.kml'
 DESTINATION = '../rhbbodydisplay/data/'
 KML = {'b': 'http://www.opengis.net/kml/2.2'}
 GPX = 'http://www.topografix.com/GPX/1/0'
-# The outermost lettered street is renamed every year (Kelter in 2024, Kundalini in 2026),
-# so it is matched by its initial rather than by name
-OUTER_STREET = 'K'
+# A season's map has been filed under its year in a few shapes over the years
+YEAR_SOURCES = ('brc.kml', 'brc-kml/brc.kml', 'brc.kmz', 'brc.zip')
+# Layers for a past season are generated beside the KML they came from, rather than
+# over the top of the ones the display is currently carrying
+YEAR_DESTINATION = 'layers'
 
 
 def load(path):
@@ -56,9 +61,24 @@ def sections(placemark):
             for section in placemark.findall('.//b:coordinates', namespaces=KML)]
 
 
-def write(name, runs, separate=False):
+def outer_street(root):
+    """Initial of the outermost lettered street, read off the 10:00 intersections.
+    It is renamed every year (Kelter in 2024, Kundalini in 2026) so it cannot be matched
+    by name, and the city has not always run out to the same letter -- 2019 reached L --
+    so take the furthest one the map actually names rather than assuming K"""
+    letters = [name.split('&')[1] for name in
+               root.xpath('./b:Document/b:Folder[b:name="Intersections"]/b:Placemark/b:name/text()',
+                          namespaces=KML)
+               if name.startswith('10:00&')]
+    letters = [letter for letter in letters if len(letter) == 1 and letter.isalpha()]
+    if not letters:
+        raise SystemExit('no lettered 10:00 intersections in the map, so the outer street is unknown')
+    return max(letters)
+
+
+def write(destination, name, runs, separate=False):
     """Write coordinate runs, optionally leaving a blank line between them"""
-    with open(DESTINATION + name, 'w') as file:
+    with open(os.path.join(destination, name), 'w') as file:
         for run in runs:
             for coordinate in run:
                 lon, lat = coordinate.split(',')[:2]
@@ -74,49 +94,86 @@ def centroid(run):
             sum(p[1] for p in points) / len(points))
 
 
-root = load(SOURCE)
-
-streets = placemarks(root, 'Streets')
-# The fence is published both at the top level and inside "Boundries", so keep the first only
-fences = root.xpath('./b:Document//b:Placemark[b:name="Fence"]', namespaces=KML)[:1]
-write('lines.csv',
-      [run for placemark in streets + fences for run in sections(placemark)],
-      separate=True)
-
-write('toilets.csv',
-      [run for placemark in placemarks(root, 'Toilets') for run in sections(placemark)])
-write('first_aid.csv',
-      [run for placemark in placemarks(root, 'POIs', 'contains(b:name,"First")')
-       for run in sections(placemark)])
-write('ranger.csv',
-      [run for placemark in placemarks(root, 'POIs', 'contains(b:name,"Ranger")')
-       for run in sections(placemark)])
-
-
-def intersection(name):
+def intersection(root, name):
     """Position of a named street intersection"""
     return centroid(sections(placemarks(root, 'Intersections', f'b:name="{name}"')[0])[0])
 
 
-def street(condition, anchor):
+def street(root, condition, anchor):
     """The single street matching the condition, drawn outwards from the anchor intersection.
     The sketch chains these four files into one closed city boundary, so their direction
     matters and the map does not always digitize them the same way from year to year"""
     run = [coordinate for placemark in placemarks(root, 'Streets', condition)
            for section in sections(placemark) for coordinate in section]
-    start = intersection(anchor)
+    start = intersection(root, anchor)
     if math.dist(centroid([run[0]]), start) > math.dist(centroid([run[-1]]), start):
         run.reverse()
     return [run]
 
 
-write('10_00.csv', street('b:name="10:00"', f'10:00&{OUTER_STREET}'))
-write('2_00.csv', street('b:name="2:00"', f'2:00&{OUTER_STREET}'))
-write('city_bounds.csv', street('contains(b:name,"Esplanade")', '10:00&Esp'))
-write('kelter.csv', street(f'starts-with(b:name,"{OUTER_STREET}")', f'10:00&{OUTER_STREET}'))
+def convert(source, destination):
+    """Write every layer the display and the reports read out of one season's map"""
+    root = load(source)
+    outer = outer_street(root)
+    os.makedirs(destination, exist_ok=True)
 
-# The ring around the Man is the unnamed plaza centred on him
-man = centroid(sections(placemarks(root, 'POIs', 'b:name="The Man"')[0])[0])
-rings = [run for placemark in placemarks(root, 'Plazas') for run in sections(placemark)]
-write('man_ring.csv',
-      [min(rings, key=lambda run: math.dist(centroid(run), man))])
+    streets = placemarks(root, 'Streets')
+    # The fence is published both at the top level and inside "Boundries", so keep the first only
+    fences = root.xpath('./b:Document//b:Placemark[b:name="Fence"]', namespaces=KML)[:1]
+    write(destination, 'lines.csv',
+          [run for placemark in streets + fences for run in sections(placemark)],
+          separate=True)
+
+    write(destination, 'toilets.csv',
+          [run for placemark in placemarks(root, 'Toilets') for run in sections(placemark)])
+    write(destination, 'first_aid.csv',
+          [run for placemark in placemarks(root, 'POIs', 'contains(b:name,"First")')
+           for run in sections(placemark)])
+    write(destination, 'ranger.csv',
+          [run for placemark in placemarks(root, 'POIs', 'contains(b:name,"Ranger")')
+           for run in sections(placemark)])
+
+    write(destination, '10_00.csv', street(root, 'b:name="10:00"', f'10:00&{outer}'))
+    write(destination, '2_00.csv', street(root, 'b:name="2:00"', f'2:00&{outer}'))
+    write(destination, 'city_bounds.csv', street(root, 'contains(b:name,"Esplanade")', '10:00&Esp'))
+    write(destination, 'kelter.csv',
+          street(root, f'starts-with(b:name,"{outer}")', f'10:00&{outer}'))
+
+    # The ring around the Man is the unnamed plaza centred on him
+    man = centroid(sections(placemarks(root, 'POIs', 'b:name="The Man"')[0])[0])
+    rings = [run for placemark in placemarks(root, 'Plazas') for run in sections(placemark)]
+    write(destination, 'man_ring.csv',
+          [min(rings, key=lambda run: math.dist(centroid(run), man))])
+    return outer
+
+
+def year_source(year):
+    """The map filed under a season's year, whichever shape it was saved in"""
+    for name in YEAR_SOURCES:
+        path = os.path.join(HERE, year, name)
+        if os.path.exists(path):
+            return path
+    raise SystemExit(f'no map under {os.path.join(HERE, year)} -- looked for ' + ', '.join(YEAR_SOURCES))
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Convert a season's BRC map into the layers the display and reports read")
+    parser.add_argument('--year', help='a season filed under kml_parsing, written to its layers directory')
+    parser.add_argument('--source', help='KML, KMZ or zipped map to read')
+    parser.add_argument('--destination', help='directory to write the layers to')
+    arguments = parser.parse_args()
+
+    if arguments.year:
+        source = arguments.source or year_source(arguments.year)
+        destination = arguments.destination or os.path.join(HERE, arguments.year, YEAR_DESTINATION)
+    else:
+        source = arguments.source or SOURCE
+        destination = arguments.destination or DESTINATION
+
+    outer = convert(source, destination)
+    print(f'{source} -> {destination} (outer street {outer})')
+
+
+if __name__ == '__main__':
+    main()
