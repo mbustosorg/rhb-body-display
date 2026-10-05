@@ -5,3 +5,11 @@ __pycache__
 .idea
 *_
 positions/
+
+# Everything the report and book generators emit. All of it is rebuilt from the CSVs in
+# kml_parsing and the logs, so none of it belongs in the history -- book.html alone is 9MB
+*.html
+*.pdf
+
+# Archives. The map sources that are already tracked stay tracked; nothing new
+*.zip
