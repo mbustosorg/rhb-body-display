@@ -102,6 +102,9 @@ POOF_RECOVERY_FRACTION = 0.9
 POOF_RECOVERY_LIMIT = 120.0
 # Poofs to smooth the supply pressure across when drawing its trend
 SUPPLY_WINDOW = 15
+# The pressure is drawn as the highest reading in each minute: what the accumulator
+# recharged to, which is the supply the poofer had, with the poofs themselves left out
+PRESSURE_PROFILE_SECONDS = 60
 
 # Until midway through 2023 the monitor logged the accumulator as raw ADS1115 counts and
 # only converted them for the display; after that it logged calibrated psi. The 2022 season
@@ -137,6 +140,9 @@ ASSUMED_KELVIN = 293.15
 # of the older kind, and a pattern that only knew the newer one made it invisible
 FILE_PATTERN = re.compile(r"^(?P<stream>[a-z_]+)_(?P<stamp>\d{8}_\d{2}(?:_\d{2})?)\.csv$")
 STAMP_FORMATS = ("%Y%m%d_%H_%M", "%Y%m%d_%H")
+# A row stamped earlier than the one before it by more than this is the clock being set
+# back, not rows written out of order
+CLOCK_STEP_MIN = datetime.timedelta(minutes=1)
 
 
 # ---------------------------------------------------------------- data loading
@@ -186,16 +192,94 @@ def number(row, key):
         return None
 
 
-def read_rows(handle, start, end):
-    """Rows of an open log file that fall inside the window"""
-    rows = []
-    for row in csv.DictReader(handle):
-        stamp = parse_timestamp(row.get("timestamp"))
+def clock_steps(stamps):
+    """Where the clock was set back part way through a file, and by how much
+
+    The Pi comes up with its clock about seven hours fast -- the UTC time read as if it
+    were Pacific -- and the first GPS fix sets it right. Rows are written in the order they
+    were taken, so the fix shows as the time going backwards between one row and the next,
+    and every row before that point was stamped on the wrong clock. Returns (index, step)
+    for each, the index being the first row on the corrected clock.
+    """
+    steps = []
+    for index in range(1, len(stamps)):
+        if stamps[index] is None or stamps[index - 1] is None:
+            continue
+        step = stamps[index - 1] - stamps[index]
+        if step > CLOCK_STEP_MIN:
+            steps.append((index, step))
+    return steps
+
+
+def read_rows(handle, start, end, step_hint=lambda: None):
+    """Rows of an open log file that fall inside the window, on the corrected clock
+
+    `step_hint` gives how far the clock was set back, measured on a stream sampled closely
+    enough to time it. Pressure is only logged around a poof, so its next row can come
+    minutes after the fix, and the jump in its own file comes out short by those minutes.
+    It is only asked for when the file has a step, so a clean file costs nothing extra.
+    """
+    rows = list(csv.DictReader(handle))
+    stamps = [parse_timestamp(row.get("timestamp")) for row in rows]
+    segment = 0
+    steps = clock_steps(stamps)
+    hint = step_hint() if steps else None
+    for index, step in steps:
+        # The hint times the first step; a later one in the same file has only its own gap
+        shift = hint if hint is not None and index == steps[0][0] else step
+        for earlier in range(segment, index):
+            if stamps[earlier] is not None:
+                stamps[earlier] -= shift
+        segment = index
+    kept = []
+    for row, stamp in zip(rows, stamps):
         if stamp is None or not start <= stamp < end:
             continue
         row["timestamp"] = stamp
-        rows.append(row)
-    return rows
+        kept.append(row)
+    return kept
+
+
+_clock_steps = {}
+
+
+def boot_clock_step(root, name):
+    """How far the clock was set back in the persist a log file belongs to, if it was
+
+    Heading is logged ten times a second, so the gap across the fix is the step to within
+    a tenth of one. Every stream written in the same persist was on the same clock.
+    """
+    match = FILE_PATTERN.match(os.path.basename(name))
+    if not match:
+        return None
+    key = (root, match.group("stamp"))
+    if key in _clock_steps:
+        return _clock_steps[key]
+    step = None
+    sibling = "heading_%s.csv" % match.group("stamp")
+    handle = None
+    if os.path.exists(os.path.join(root, sibling)):
+        handle = open(os.path.join(root, sibling), newline="")
+    else:
+        for entry in sorted(os.listdir(root)):
+            if entry.startswith("heading_") and entry.endswith(".zip"):
+                archive = zipfile.ZipFile(os.path.join(root, entry))
+                members = [member for member in archive.namelist()
+                           if os.path.basename(member) == sibling]
+                if members:
+                    handle = io.TextIOWrapper(archive.open(members[0]), "utf-8")
+                    break
+    if handle is not None:
+        with handle:
+            stamps = [parse_timestamp(row.get("timestamp")) for row in csv.DictReader(handle)]
+        steps = clock_steps(stamps)
+        if steps:
+            index, gap = steps[0]
+            # Less one sample interval, which is time that really passed across the fix
+            interval = stamps[index - 1] - stamps[index - 2] if index >= 2 else datetime.timedelta(0)
+            step = gap + interval
+    _clock_steps[key] = step
+    return step
 
 
 def load_stream(root, stream, start, end):
@@ -215,13 +299,14 @@ def load_stream(root, stream, start, end):
                     if not os.path.basename(name).startswith(prefix):
                         continue
                     with archive.open(name) as member:
-                        rows.extend(read_rows(io.TextIOWrapper(member, "utf-8"), start, end))
+                        rows.extend(read_rows(io.TextIOWrapper(member, "utf-8"), start, end,
+                                              lambda: boot_clock_step(root, name)))
         elif entry.startswith(prefix) and entry.endswith(".csv"):
             stamp = stamp_of(entry)
             if stamp is not None and not start - margin <= stamp <= end + margin:
                 continue
             with open(path, newline="") as handle:
-                rows.extend(read_rows(handle, start, end))
+                rows.extend(read_rows(handle, start, end, lambda: boot_clock_step(root, entry)))
     rows.sort(key=lambda row: row["timestamp"])
     return rows
 
@@ -521,6 +606,8 @@ class Report:
     speed_series: List[Tuple[datetime.datetime, Optional[float]]]
     poof_bins: List[Tuple[datetime.datetime, int]]
     temperature: List[Tuple[datetime.datetime, float]] = field(default_factory=list)
+    # Accumulator pressure, the highest reading in each minute
+    pressure_series: List[Tuple[datetime.datetime, float]] = field(default_factory=list)
     gaps: List[Tuple[datetime.datetime, datetime.datetime, float]] = field(default_factory=list)
     glitches: int = 0
     # The pressure trace arrived as raw ADC counts and was converted to psi here
@@ -901,7 +988,13 @@ def locate_poofs(poofs, fixes):
             continue
         span = (after.timestamp - before.timestamp).total_seconds()
         if span > GAP_SECONDS:
-            # Straddling a hole in the position log, so where it happened is a guess
+            # Positions are only logged when the car moves, so a long silence that ends where
+            # it began is the car parked, and the poof happened there -- the same reading
+            # build_segments gives it. One that covered ground is a hole in the log, and
+            # where along it the poof happened is a guess
+            moved_ft = haversine_mi(before.lat, before.lon, after.lat, after.lon) * FEET_PER_MILE
+            if moved_ft <= STOP_RADIUS_FT:
+                poof.lat, poof.lon = before.lat, before.lon
             continue
         share = (poof.timestamp - before.timestamp).total_seconds() / span if span else 0.0
         poof.lat = before.lat + (after.lat - before.lat) * share
@@ -912,6 +1005,25 @@ def propane_pounds(psi_drawn, gallons, kelvin=ASSUMED_KELVIN):
     """Mass behind a total accumulator draw, given the accumulator's volume"""
     moles = psi_drawn * PASCALS_PER_PSI * gallons * CUBIC_M_PER_GALLON / (GAS_CONSTANT * kelvin)
     return moles * PROPANE_KG_PER_MOL * POUNDS_PER_KG
+
+
+def pressure_profile(rows, seconds=PRESSURE_PROFILE_SECONDS):
+    """The accumulator pressure through the night, as the highest reading in each interval
+
+    The trace is ten samples a second, far more than a page can draw. Each interval keeps
+    its peak, which is where the accumulator recharged to between poofs.
+    """
+    peaks = {}
+    for row in rows:
+        level = number(row, "level")
+        if level is None:
+            continue
+        stamp = row["timestamp"]
+        slot = stamp - datetime.timedelta(seconds=(stamp.minute * 60 + stamp.second) % seconds,
+                                          microseconds=stamp.microsecond)
+        if slot not in peaks or level > peaks[slot]:
+            peaks[slot] = level
+    return sorted(peaks.items())
 
 
 def bin_poofs(poofs, start, end, minutes=15):
@@ -986,7 +1098,10 @@ def build_report(data_root, map_root, night, accumulator_gallons=None):
                 stop.poofs += 1
                 break
 
-    temperature = load_stream(data_root, "temp", start, end)
+    # Since 2026 the bath reports its own water temperature, and the monitor logs it to
+    # the water stream rather than temp
+    temperature = load_stream(data_root, "temp", start, end) + load_stream(data_root, "water", start, end)
+    temperature.sort(key=lambda row: row["timestamp"])
     heading = load_stream(data_root, "heading", start, end)
 
     return Report(
@@ -995,6 +1110,7 @@ def build_report(data_root, map_root, night, accumulator_gallons=None):
         speed_series=pace(segments, start, end),
         poof_bins=bin_poofs(poofs, start, end),
         temperature=series_of(temperature, "temp_f"),
+        pressure_series=[] if chattering else pressure_profile(pressure),
         gaps=gaps, glitches=glitches, calibrated=calibrated, chattering=chattering,
         # A correction is days, not months, so a corrected night is still in its own season
         clock_shift=CLOCK_CORRECTIONS.get(night.year),

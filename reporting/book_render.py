@@ -27,7 +27,7 @@ import report_render as web
 from report_render import clock_time, commas, duration, esc
 
 TITLE = "Red Hot Beverly"
-EDITION = "Version 1.0"
+EDITION = "Version 2.0"
 
 # US Letter, portrait. The inner margin carries the gutter, so a page knows its own hand
 PAGE_W_IN = 8.5
@@ -41,8 +41,8 @@ MARGIN_INNER_IN = 0.9
 MAP_ASPECT = 1.05
 # The stop list has a page to itself now, so it is no longer trimmed in practice
 STOPS_ON_PAGE = 20
-# Back to full height, the propane curve no longer sharing its page with two charts
-PROPANE_CHART_HEIGHT = 200.0
+# Taller again now the pressure shares the curve's chart and the supply card is gone
+PROPANE_CHART_HEIGHT = 260.0
 
 # Water in a tub in the desert in August does not get near freezing. 2023 never reads below
 # 57F and 2025 never below 54, but 2022 runs continuously down to exactly 32.0 -- zero
@@ -263,14 +263,15 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .divider .figures { margin-top: auto; }
 
 /* ------------------------------------------------------------------ contents */
-.toc { width: 100%%; font-size: 9.5pt; }
+.toc { width: 100%%; font-size: 9pt; }
 /* The leaders take the slack, so a night's name never breaks across two lines */
-.toc td { border: 0; padding: 2px 0; white-space: nowrap; }
+/* Tight enough that five seasons of nights fit on the one page */
+.toc td { border: 0; padding: 0.5px 0; white-space: nowrap; }
 .toc td:first-child { padding-right: 8px; }
-.toc td.dots { padding: 2px 8px; }
+.toc td.dots { padding: 0.5px 8px; }
 .toc .yr {
   font-family: system-ui, -apple-system, sans-serif; font-weight: 700;
-  font-size: 8.5pt; letter-spacing: 0.12em; padding-top: 13px; color: var(--brand-ink);
+  font-size: 8.5pt; letter-spacing: 0.12em; padding-top: 9px; color: var(--brand-ink);
 }
 .toc .dots { border-bottom: 1px dotted var(--border); width: 100%%; }
 .toc .pg { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
@@ -363,13 +364,14 @@ def top_speed(report):
 # ------------------------------------------------------------------- front matter
 
 
-def cover(book):
+def cover(book, seasons):
     body = ('<div class="stack">'
             '<p class="brandmark"><span class="canister"></span>The fire extinguisher</p>'
             '<h1>Red Hot<br>Beverly</h1>'
             '<div class="bar"></div>'
             '<p class="sub">%s</p></div>'
-            '<div class="years">Every night on the playa &middot; 2022 &ndash; 2025</div>' % esc(EDITION))
+            '<div class="years">Every night on the playa &middot; %d &ndash; %d</div>'
+            % (esc(EDITION), min(seasons), max(seasons)))
     book.add(body, kind="cover", folio=False)
     book.blank()
 
@@ -486,27 +488,30 @@ def propane_block(report):
     if not remaining:
         return ""
     recoveries = sorted(poof.recovery for poof in report.poofs if poof.recovery is not None)
-    trend = report.supply_trend
     figures = [figure("Half gone by", esc(clock_time(report.half_gone)) if report.half_gone else "&mdash;",
                       "", "of the night's load")]
     if recoveries:
         figures.append(figure("Recharge", "%.0f" % statistics.median(recoveries), "s",
                               "median time back to pressure"))
-    if trend:
-        figures.append(figure("Supply", "%.0f &rarr; %.0f" % trend, "psi",
-                              "start of the night to the end"))
+    # The pressure itself, rather than a start and end figure for it, because a summary of
+    # two numbers misses the night the tank ran down to nothing at five in the morning
+    pressure = None
+    if report.pressure_series:
+        pressure = (report.pressure_series, "psi", "var(--series-1)",
+                    "accumulator pressure, highest each minute", "load left, % of the night's")
     return ('<h3>Propane</h3><div class="figures %s">%s</div>%s'
             % ("two" if len(figures) == 2 else "", "".join(figures),
-               web.line_chart(report, remaining, "", "Propane remaining through the night",
-                              "var(--series-2)", height=PROPANE_CHART_HEIGHT)))
+               web.line_chart(report, remaining, "%" if pressure else "",
+                              "Propane remaining and accumulator pressure through the night",
+                              "var(--series-2)", height=PROPANE_CHART_HEIGHT, right=pressure)))
 
 
 def tub_block(report):
     """What the water in the tub was doing, where the probe was telling the truth"""
     if not report.temperature:
         return ('<hr class="thin"><h3>Tub water</h3>'
-                '<p class="empty">Nothing logged this night &mdash; the <code>temp</code> stream '
-                'is empty.</p>')
+                '<p class="empty">Nothing logged this night &mdash; the <code>temp</code> and '
+                '<code>water</code> streams are empty.</p>')
     plausible = [(when, value) for when, value in report.temperature if value >= TUB_MIN_F]
     if len(plausible) < TUB_MIN_USABLE * len(report.temperature):
         return ('<hr class="thin"><h3>Tub water</h3>'
@@ -551,10 +556,12 @@ def route_page(report):
 
 def poof_page(report):
     located = [poof for poof in report.poofs if poof.lat is not None]
+    if len(located) == len(report.poofs):
+        placed = "all %s of the night's were placed." % commas(len(report.poofs))
+    else:
+        placed = "%s of the night's %s were placed." % (commas(len(located)), commas(len(report.poofs)))
     caption = ("Every poof placed on the track by its timestamp, then grouped by "
-               "neighbourhood. Bigger circles are where the poofer fired hardest; %s of the "
-               "night's %s were placed."
-               % (commas(len(located)), commas(len(report.poofs))))
+               "neighbourhood. Bigger circles are where the poofer fired hardest; " + placed)
     return map_page(report,
                     web.poof_map(report, aspect=MAP_ASPECT,
                                  key="p%s" % report.night.strftime("%Y%m%d")),
@@ -779,7 +786,7 @@ def render_book(reports):
         seasons.setdefault(report.night.year, []).append(report)
 
     book = Book()
-    cover(book)
+    cover(book, seasons)
     title_page(book, reports, sum(r.miles for r in reports), sum(len(r.poofs) for r in reports))
     # The contents cannot be written until every page has a number, so it is held back
     contents = book.reserve()

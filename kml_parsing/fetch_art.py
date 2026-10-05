@@ -35,7 +35,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 ARCHIVE = "https://bm-innovate.s3.amazonaws.com/archive/%d/art.json"
 DESTINATION = os.path.join("layers", "art.csv")
-SEASONS = (2022, 2023, 2024, 2025)
+SEASONS = (2022, 2023, 2024, 2025, 2026)
 
 
 # Registrations that were never given a position carry 0.0, 0.0 rather than nothing, which

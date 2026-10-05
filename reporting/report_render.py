@@ -764,25 +764,64 @@ def poof_chart(report):
     return svg(CHART_WIDTH, 220.0, "".join(parts), "Poofs per quarter hour through the night")
 
 
-def line_chart(report, series, unit, label, colour="var(--series-1)", decimals=0, height=200.0):
-    """A plain timeline for one sensor
+def line_chart(report, series, unit, label, colour="var(--series-1)", decimals=0, height=200.0,
+               right=None):
+    """A plain timeline for one sensor, and optionally a second against its own axis
 
     The book asks for a shorter one than the page does, having less room to give it.
+    `right` is (series, unit, colour, name, own name) for a second line read off a
+    right hand axis; the two are then named in a key rather than by their closing values.
     """
     span = (report.end - report.start).total_seconds()
     values = [value for _, value in series]
     floor, ceiling, step = nice_bounds(min(values), max(values))
-    # Room on the right for the closing value, which rides the end of the line
-    plot = Plot(CHART_WIDTH, height, (0.0, span), (floor, ceiling), margin=(28.0, 74.0, 34.0, 52.0))
+    # Room on the right for the closing value, which rides the end of the line, or for the
+    # second axis' labels, and room at the top for the key when there are two lines
+    margin = (44.0, 52.0, 34.0, 52.0) if right else (28.0, 74.0, 34.0, 52.0)
+    plot = Plot(CHART_WIDTH, height, (0.0, span), (floor, ceiling), margin=margin)
     ticks = [floor + step * index for index in range(int(round((ceiling - floor) / step)) + 1)]
     parts = [plot.frame(ticks, lambda value: "%.*f" % (decimals, value), unit)]
-    points = [(plot.x((moment - report.start).total_seconds()), plot.y(value)) for moment, value in series]
+
+    def x_of(moment):
+        return plot.x((moment - report.start).total_seconds())
+
+    if right:
+        right_series, right_unit, right_colour, right_name, own_name = right
+        right_values = [value for _, value in right_series]
+        r_floor, r_ceiling, r_step = nice_bounds(min(0.0, min(right_values)), max(right_values))
+        r_plot = Plot(CHART_WIDTH, height, (0.0, span), (r_floor, r_ceiling), margin=margin)
+        for index in range(len(ticks)):
+            value = r_floor + (r_ceiling - r_floor) * index / (len(ticks) - 1)
+            parts.append('<text class="tick" x="%.1f" y="%.1f" text-anchor="start">%g</text>'
+                         % (plot.left + plot.inner_w + 8, plot.y(ticks[index]) + 4, round(value, 1)))
+        parts.append('<text class="axis-title" x="%.1f" y="%.1f" text-anchor="end">%s</text>'
+                     % (CHART_WIDTH - 4, plot.top - 12, esc(right_unit)))
+        # A gap in the log is a break in the line, not a straight run across it
+        runs, previous = [], None
+        for moment, value in right_series:
+            point = "%.1f,%.1f" % (x_of(moment), r_plot.y(value))
+            if previous is None or (moment - previous).total_seconds() > 300:
+                runs.append([point])
+            else:
+                runs[-1].append(point)
+            previous = moment
+        parts.append('<path d="%s" fill="none" stroke="%s" stroke-width="1.25" stroke-linejoin="round" '
+                     'stroke-linecap="round"/>' % (" ".join("M" + " L".join(run) for run in runs), right_colour))
+        key_x = plot.left
+        for name, swatch in ((own_name, colour), (right_name, right_colour)):
+            parts.append('<rect x="%.1f" y="%.1f" width="14" height="3" rx="1.5" fill="%s"/>'
+                         % (key_x, 8.0, swatch))
+            parts.append('<text class="tick" x="%.1f" y="%.1f">%s</text>' % (key_x + 20, 13.0, esc(name)))
+            key_x += 34 + 5.6 * len(name)
+
+    points = [(x_of(moment), plot.y(value)) for moment, value in series]
     parts.append('<path d="M%s" fill="none" stroke="%s" stroke-width="2" stroke-linejoin="round" '
                  'stroke-linecap="round"/>' % (" L".join("%.1f,%.1f" % point for point in points), colour))
     parts.append('<circle cx="%.1f" cy="%.1f" r="4.5" fill="%s" stroke="var(--surface-1)" stroke-width="2"/>'
                  % (points[-1][0], points[-1][1], colour))
-    parts.append('<text class="mark-label" x="%.1f" y="%.1f">%.*f %s</text>'
-                 % (points[-1][0] + 10, points[-1][1] + 4, decimals, series[-1][1], esc(unit)))
+    if not right:
+        parts.append('<text class="mark-label" x="%.1f" y="%.1f">%.*f %s</text>'
+                     % (points[-1][0] + 10, points[-1][1] + 4, decimals, series[-1][1], esc(unit)))
     parts.append(plot.hour_axis(report.start, report.end))
     return svg(CHART_WIDTH, height, "".join(parts), esc(label))
 
@@ -974,7 +1013,7 @@ def health_section(report):
         parts.append(line_chart(report, report.temperature, "°F", "Tub water temperature", "var(--series-2)"))
     else:
         parts.append('<p class="empty">Tub water: nothing logged this night '
-                     '(the <code>temp</code> stream is empty).</p>')
+                     '(the <code>temp</code> and <code>water</code> streams are empty).</p>')
     rows = []
     for name, count in sorted(report.counts.items()):
         state = ("good", "logging") if count else ("critical", "silent")

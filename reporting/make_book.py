@@ -14,7 +14,7 @@
 
 """Builds the printed book: one spread a night, gathered by season, and a PDF of it
 
-    python3 make_book.py                  # book.html and Red Hot Beverly v1.0.pdf
+    python3 make_book.py                  # book.html and Red Hot Beverly v<edition>.pdf
     python3 make_book.py --no-pdf         # just the HTML, to look at in a browser
 """
 
@@ -28,7 +28,7 @@ import excursion_report as report_lib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_HTML = os.path.join(HERE, "book.html")
-DEFAULT_PDF = os.path.join(HERE, "Red Hot Beverly v1.0.pdf")
+DEFAULT_PDF = os.path.join(HERE, "%s v%s.pdf" % (book_render.TITLE, book_render.EDITION.split()[-1]))
 
 # Chrome renders the @page size and the fixed page boxes faithfully; nothing else on hand does
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"

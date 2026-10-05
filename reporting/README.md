@@ -23,8 +23,8 @@ The book
     python3 make_book.py
 
 Gathers every playa night -- the shakedowns are not part of it -- and lays them out as a
-printed book, `book.html` beside the script and `Red Hot Beverly v1.0.pdf` next to it.
-US Letter portrait, 105 pages. Seasons run forwards, 2022 first, each opening on a right
+printed book, `book.html` beside the script and `Red Hot Beverly v2.0.pdf` next to it.
+US Letter portrait, 135 pages. Seasons run forwards, 2022 first, each opening on a right
 hand page behind a divider carrying the year's totals.
 
 A night is two spreads. The first is where it went: the route map on the left with the
@@ -90,6 +90,14 @@ Saturday 3 September 2022. The correction lands all five playa nights inside the
 the Temple on the Sunday and the drive home on the Tuesday. The Pi was off for the drive
 each way and its clock lost those hours too, so the shift is exact only between them and
 the Oakland nights either side are right to within about half a day.
+
+Since 2026 the Pi comes up with its clock about seven hours fast -- the UTC time read as
+if it were Pacific -- until the first GPS fix sets it right, a second or two later. The
+fix shows in each log file as the time going backwards between one row and the next, and
+the rows before it are put back by the size of that step, timed on the heading stream,
+which is logged ten times a second. It is a handful of rows a night, but one of them is a
+pressure reading, and stamped seven hours late it landed among the dregs of the tank at
+dawn and made nine poofs on 2026-08-30 that never happened.
 
 Each night is addressed against the map of the year it was driven, taken from
 `kml_parsing/<year>/layers`, falling back to whatever the display is carrying in
@@ -178,8 +186,11 @@ camps were not.
   between poofs, which sags as the tank empties or goes cold under heavy draw. Rising
   recharge times through the night corroborate it -- on 2024-08-26 the supply fell
   43 to 30 psi while recharge went 19s to 34s.
-* **Poof positions** are interpolated from the fixes either side of each poof. Poofs
-  that fired inside a gap in the position log are left off the density map, and the
+* **Poof positions** are interpolated from the fixes either side of each poof. Positions
+  are only logged when the car moves, so a long silence between two fixes in the same
+  place is the car parked, and a poof in it is put where the car stood -- without that,
+  2026-08-30 lost 303 of its poofs off the map, most of them fired standing still. Poofs
+  that fired inside a silence that covered ground are left off the density map, and the
   legend says how many.
 * **Tub water** comes from the `temp` stream. When the sensor was silent the report says
   so instead of drawing an empty chart -- the 2024 season has no `temp` rows at all. The
