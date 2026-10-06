@@ -27,7 +27,12 @@ import report_render as web
 from report_render import clock_time, commas, duration, esc
 
 TITLE = "Red Hot Beverly"
-EDITION = "Version 2.0"
+
+# The car has been rebuilt, and the book follows her: everything up to the rebuild is the
+# first car and everything from 2026 on is the second. Each opens a part of its own.
+# (name, first season or None, last season or None, the vehicle she was built on)
+PARTS = (("Red Hot Beverly 1.0", None, 2025, "1973 Dodge B300, V-8"),
+         ("Red Hot Beverly 2.0", 2026, None, "2012 Freightliner MT-55, Cummins six cylinder"))
 
 # US Letter, portrait. The inner margin carries the gutter, so a page knows its own hand
 PAGE_W_IN = 8.5
@@ -101,11 +106,10 @@ STYLE = """
   --warning: #fab219;
   --critical: #d03b3b;
   /* On paper the palest step vanishes, so the ramp starts further up than on screen */
-  --speed-1: #9dc2f0;
-  --speed-2: #5f9ce8;
-  --speed-3: #2a78d6;
-  --speed-4: #1a55a0;
-  --speed-5: #0b2f5e;
+  --speed-1: #6cc24a;
+  --speed-2: #1f968b;
+  --speed-3: #39568c;
+  --speed-4: #8e1b1b;
 }
 * { box-sizing: border-box; }
 /* Chrome drops background colour when it prints unless told not to, which would take the
@@ -259,6 +263,21 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   font-size: 92pt; font-weight: 620; line-height: 0.9; letter-spacing: -0.03em;
   color: var(--brand); margin: 1.1in 0 0;
 }
+.divider.part .eyebrow { margin-top: 1.4in; }
+.divider .part-name {
+  font-size: 46pt; font-weight: 620; line-height: 1.02; letter-spacing: -0.02em;
+  color: var(--text-primary); margin: 0;
+}
+.divider .bar { width: 1.5in; height: 5px; background: var(--brand); margin: 26px 0 0; border-radius: 2px; }
+.divider .vehicle { margin: 22px 0 0; font-size: 15pt; color: var(--text-primary); }
+.divider .vehicle .label {
+  display: block; margin-bottom: 4px; font-family: system-ui, -apple-system, sans-serif;
+  font-size: 8.5pt; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted);
+}
+.published {
+  margin-top: 18px; font-family: system-ui, -apple-system, sans-serif; font-size: 8.5pt;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted);
+}
 .divider .season { margin-top: 16px; max-width: 4.6in; color: var(--text-secondary); }
 .divider .figures { margin-top: auto; }
 
@@ -368,19 +387,18 @@ def cover(book, seasons):
     body = ('<div class="stack">'
             '<p class="brandmark"><span class="canister"></span>The fire extinguisher</p>'
             '<h1>Red Hot<br>Beverly</h1>'
-            '<div class="bar"></div>'
-            '<p class="sub">%s</p></div>'
+            '<div class="bar"></div></div>'
             '<div class="years">Every night on the playa &middot; %d &ndash; %d</div>'
-            % (esc(EDITION), min(seasons), max(seasons)))
+            % (min(seasons), max(seasons)))
     book.add(body, kind="cover", folio=False)
     book.blank()
 
 
-def title_page(book, nights, miles, poofs):
+def title_page(book, nights, miles, poofs, published):
     seasons = sorted({night.night.year for night in nights})
     body = ('<p class="eyebrow">After excursion log</p>'
             '<h1>Red Hot Beverly</h1>'
-            '<p class="lede">%s &mdash; every night the art car went out on the playa, '
+            '<p class="lede">Every night the art car went out on the playa, '
             'as her own sensors recorded it.</p>'
             '<hr class="rule">'
             '<div class="figures four">%s%s%s%s</div>'
@@ -390,21 +408,26 @@ def title_page(book, nights, miles, poofs):
             '%d seasons. Every night is addressed against the map of the year it was driven, '
             'because Black Rock City is surveyed afresh each year and never lands twice in '
             'the same place.</p>'
-            % (esc(EDITION),
-               figure("Nights", commas(len(nights)), "", "out on the playa"),
+            '<p class="published">Published %s</p>'
+            % (figure("Nights", commas(len(nights)), "", "out on the playa"),
                figure("Distance", "%.0f" % miles, "mi", "wheels turning"),
                figure("Poofs", commas(poofs), "", "counted off the pressure trace"),
                figure("Seasons", "%d" % len(seasons), "", "%d to %d" % (seasons[0], seasons[-1])),
-               len(seasons)))
+               len(seasons), esc(published.strftime("%-d %B %Y"))))
     book.add(body, folio=False)
     book.blank()
 
 
-def contents_body(entries, seasons, features=()):
-    rows = []
+def contents_body(entries, seasons, features, name, years, opens_on):
+    """One part's page of the contents: where the car opens, then each of her seasons
+
+    A part to a page. Five seasons of nights no longer fit on one, and the page after the
+    contents was a blank verso anyway, so the second car costs the book nothing.
+    """
     extra = {night: (label, page) for night, label, page in features}
+    rows = ['<tr><td>The car</td><td class="dots"></td><td class="pg">%d</td></tr>' % opens_on]
     # A contents follows the page order, and the book reads forwards through the years
-    for year in sorted(seasons):
+    for year in years:
         rows.append('<tr><td class="yr" colspan="3">%d</td></tr>' % year)
         rows.append('<tr><td>The season</td><td class="dots"></td><td class="pg">%d</td></tr>'
                     % seasons[year])
@@ -418,8 +441,43 @@ def contents_body(entries, seasons, features=()):
                 label, feature_page = extra[night]
                 rows.append('<tr><td class="feat">%s</td><td class="dots"></td>'
                             '<td class="pg">%d</td></tr>' % (esc(label), feature_page))
-    return ('<p class="eyebrow">Contents</p><h2>The nights</h2><hr class="rule">'
-            '<table class="toc">%s</table>' % "".join(rows))
+    return ('<p class="eyebrow">Contents</p><h2>%s</h2><hr class="rule">'
+            '<table class="toc">%s</table>' % (esc(name), "".join(rows)))
+
+
+# ---------------------------------------------------------------------- the parts
+
+
+def part_of(year):
+    """The name of the part a season belongs to"""
+    for name, first, last, _ in PARTS:
+        if (first is None or year >= first) and (last is None or year <= last):
+            return name
+    return TITLE
+
+
+def vehicle_of(name):
+    """What the car in a part was built on, or None"""
+    return next((vehicle for part, _, _, vehicle in PARTS if part == name), None)
+
+
+def part_divider(book, name, reports):
+    """The page a car opens on: her seasons, and what she did across them"""
+    years = sorted({report.night.year for report in reports})
+    span = "%d" % years[0] if len(years) == 1 else "%d &ndash; %d" % (years[0], years[-1])
+    body = ('<p class="eyebrow">%s</p>'
+            '<div class="part-name">%s</div>'
+            '<div class="bar"></div>'
+            '%s'
+            '<div class="figures four">%s%s%s%s</div>'
+            % ("One season" if len(years) == 1 else "%d seasons" % len(years), esc(name),
+               '<p class="vehicle"><span class="label">Built on</span>%s</p>' % esc(vehicle_of(name))
+               if vehicle_of(name) else "",
+               figure("Seasons", span),
+               figure("Nights", "%d" % len(reports)),
+               figure("Distance", "%.0f" % sum(report.miles for report in reports), "mi"),
+               figure("Poofs", commas(sum(len(report.poofs) for report in reports)))))
+    return book.add(body, kind="divider part", runner=name)
 
 
 # -------------------------------------------------------------------- the season
@@ -760,11 +818,13 @@ def colophon(book):
             'not kept, so this is a reconstruction rather than a readback. Through 2022 the '
             'monitor logged the sensor raw and it has been put back into psi here with the '
             'monitor&rsquo;s own calibration.</p>'
-            '<p><strong>Nothing outside the trash fence was the car.</strong> The 2022 '
-            'receiver would set off in a straight line at a steady five miles an hour and '
-            'reappear where the car really was, half an hour later. The speed gives nothing '
-            'away; where it ends up does, two and three times further out than a fence that '
-            'cannot be driven through.</p>'
+            '<p><strong>2022 is drawn east to west as driven, north to south only '
+            'roughly.</strong> That season the monitor logged the real latitude once an hour '
+            'and in between added a fixed step to the last one, whatever the receiver said, '
+            'so the logged track crept north at five miles an hour. Longitude was logged '
+            'honestly. North and south are reckoned here from the van&rsquo;s compass, which '
+            'is a poor one, and pinned to the hourly fixes that were real: tried on 2023, '
+            'where the truth is known, the typical point lands about 500 ft from it.</p>'
             '<p><strong>The clock is corrected where the Pi had none.</strong> Without a '
             'realtime clock it woke wherever the clock had been left, and stamped the 2022 '
             'season thirteen days behind. The anchor is the burn: on the night the log calls '
@@ -778,7 +838,7 @@ def colophon(book):
     book.add(body, runner="Colophon")
 
 
-def render_book(reports):
+def render_book(reports, published=None):
     """The whole book, newest season last so it reads forwards through the years"""
     reports = sorted(reports, key=lambda report: report.night)
     seasons = {}
@@ -787,12 +847,24 @@ def render_book(reports):
 
     book = Book()
     cover(book, seasons)
-    title_page(book, reports, sum(r.miles for r in reports), sum(len(r.poofs) for r in reports))
-    # The contents cannot be written until every page has a number, so it is held back
-    contents = book.reserve()
-
-    entries, divider_pages, features = [], {}, []
+    title_page(book, reports, sum(r.miles for r in reports), sum(len(r.poofs) for r in reports),
+               published or datetime.date.today())
+    # The contents cannot be written until every page has a number, so it is held back:
+    # a page for each car the book has nights for
+    names = []
     for year in sorted(seasons):
+        if part_of(year) not in names:
+            names.append(part_of(year))
+    contents = [book.reserve() for _ in names]
+
+    entries, divider_pages, features, part_pages = [], {}, [], []
+    for year in sorted(seasons):
+        name = part_of(year)
+        if not part_pages or part_pages[-1][0] != name:
+            book.align_recto()
+            in_part = [report for report in reports if part_of(report.night.year) == name]
+            part_pages.append((name, sorted({report.night.year for report in in_part}),
+                               part_divider(book, name, in_part)))
         book.align_recto()
         divider_pages[year] = season_divider(book, year, seasons[year])
         for report in seasons[year]:
@@ -807,5 +879,7 @@ def render_book(reports):
     book.align_recto()
     colophon(book)
 
-    book.fill(contents, contents_body(entries, divider_pages, features), runner="Contents")
-    return book.html("%s %s" % (TITLE, EDITION))
+    for page, (name, years, opens_on) in zip(contents, part_pages):
+        book.fill(page, contents_body(entries, divider_pages, features, name, years, opens_on),
+                  runner="Contents")
+    return book.html(TITLE)

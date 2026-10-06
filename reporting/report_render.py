@@ -19,9 +19,12 @@ import html
 import math
 import statistics
 
-# Speed bands, echoing the colours the body display uses for the live track
-SPEED_BANDS = ((0.0, 2.0, "under 2"), (2.0, 5.0, "2 - 5"), (5.0, 10.0, "5 - 10"),
-               (10.0, 15.0, "10 - 15"), (15.0, None, "15+"))
+# Speed bands, set where the driving actually is. Beverly spends nearly two thirds of her
+# miles between 2 and 5 mph, and bands of 2 - 5 and 5 - 10 drew almost every night in one
+# colour. These split her miles roughly 8, 29, 35 and 28 per cent. Four, not five: five
+# steps of any ramp come too close together to tell apart on a line this thin
+SPEED_BANDS = ((0.0, 2.0, "under 2"), (2.0, 3.5, "2 - 3.5"), (3.5, 5.0, "3.5 - 5"),
+               (5.0, None, "5+"))
 
 MAP_WIDTH = 900.0
 # Poofs closer together than this are counted as one place on the density map
@@ -55,11 +58,13 @@ STYLE = """
   --good: #0ca30c;
   --warning: #fab219;
   --critical: #d03b3b;
-  --speed-1: #86b6ef;
-  --speed-2: #5598e7;
-  --speed-3: #2a78d6;
-  --speed-4: #1c5cab;
-  --speed-5: #0d366b;
+  /* Green through teal and blue to dark red for the fastest. One hue could not be told
+     apart at four steps on a thin line; these get darker with speed, and every
+     neighbour stays clear of the next for colour blind readers too */
+  --speed-1: #6cc24a;
+  --speed-2: #1f968b;
+  --speed-3: #39568c;
+  --speed-4: #8e1b1b;
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) .viz-root {
@@ -78,11 +83,10 @@ STYLE = """
     --series-3: #25a08d;
     --brand: #b8503f;
     --brand-ink: #c9614f;
-    --speed-1: #184f95;
-    --speed-2: #256abf;
-    --speed-3: #3987e5;
-    --speed-4: #86b6ef;
-    --speed-5: #cde2fb;
+    --speed-1: #3b5f9a;
+    --speed-2: #1f968b;
+    --speed-3: #6cc24a;
+    --speed-4: #e5534b;
   }
 }
 :root[data-theme="dark"] .viz-root {
@@ -101,11 +105,10 @@ STYLE = """
   --series-3: #25a08d;
   --brand: #b8503f;
   --brand-ink: #c9614f;
-  --speed-1: #184f95;
-  --speed-2: #256abf;
-  --speed-3: #3987e5;
-  --speed-4: #86b6ef;
-  --speed-5: #cde2fb;
+  --speed-1: #3b5f9a;
+  --speed-2: #1f968b;
+  --speed-3: #6cc24a;
+  --speed-4: #e5534b;
 }
 * { box-sizing: border-box; }
 body { margin: 0; }
@@ -326,6 +329,23 @@ def nice_ceiling(value, steps=4):
     return 10.0 * magnitude * steps
 
 
+def paced_band(report):
+    """The speed band of a leg, read off the same minute by minute pace the speed chart draws
+
+    A leg's own speed is a few feet over a few seconds, where a little GPS wander reads as
+    a burst: 2026-08-30 had 56 legs over 5 mph, none longer than three seconds, in a night
+    whose fastest minute was 4.9. Colouring by the minute makes the map and the chart
+    tell the same story. A leg in a minute with no pace keeps its own speed.
+    """
+    pace = report.speed_series
+    def band(segment):
+        middle = segment.start.timestamp + (segment.end.timestamp - segment.start.timestamp) / 2
+        index = int((middle - report.start).total_seconds() // 60)
+        mph = pace[index][1] if 0 <= index < len(pace) else None
+        return speed_band(segment.mph if mph is None else mph)
+    return band
+
+
 def speed_band(mph):
     """Index of the speed band a leg falls in"""
     for index, (low, high, _) in enumerate(SPEED_BANDS):
@@ -382,7 +402,9 @@ class Plot:
         if tick < start:
             tick += datetime.timedelta(hours=1)
         while tick <= end:
-            if tick.hour % 2 == 0 or tick == start:
+            # Every second hour counted from the start, so an odd starting hour does not
+            # land its label on top of the even one beside it
+            if int((tick - start).total_seconds() // 3600) % 2 == 0:
                 x = self.x((tick - start).total_seconds())
                 parts.append('<text class="tick" x="%.1f" y="%.1f" text-anchor="middle">%s</text>'
                              % (x, self.top + self.inner_h + 18, esc(clock_time(tick))))
@@ -529,6 +551,31 @@ class MapFrame:
                 % (x, y, x + length, y, x, y - 6))
 
 
+def direction_carets(frame, report, size=5.0):
+    """A small chevron at every mile driven, pointing the way the car was going
+
+    The angle is taken off the projected leg, not the compass, so it agrees with the line
+    it sits on whatever the map's aspect. Each sits on a ring of the surface colour so it
+    reads over any band of the track.
+    """
+    parts = []
+    for segment, fraction in report.mile_marks:
+        x0, y0 = frame.project(segment.start.lon, segment.start.lat)
+        x1, y1 = frame.project(segment.end.lon, segment.end.lat)
+        if (x0, y0) == (x1, y1):
+            continue
+        x, y = x0 + (x1 - x0) * fraction, y0 + (y1 - y0) * fraction
+        angle = math.degrees(math.atan2(y1 - y0, x1 - x0))
+        chevron = "M%.1f,%.1f L%.1f,0 L%.1f,%.1f" % (-size, -size, size * 0.6, -size, size)
+        parts.append('<g transform="translate(%.1f,%.1f) rotate(%.1f)">'
+                     '<path d="%s" fill="none" stroke="var(--surface-1)" stroke-width="4.5" '
+                     'stroke-linecap="round" stroke-linejoin="round"/>'
+                     '<path d="%s" fill="none" stroke="var(--text-primary)" stroke-width="2" '
+                     'stroke-linecap="round" stroke-linejoin="round"/></g>'
+                     % (x, y, angle, chevron, chevron))
+    return "".join(parts)
+
+
 def map_chart(report, aspect=None, focus=None, key="route", marks=()):
     """The night's track drawn over this year's streets
 
@@ -544,9 +591,11 @@ def map_chart(report, aspect=None, focus=None, key="route", marks=()):
         parts.append(frame.man())
         parts.append(frame.places())
 
-    for band, points in frame.runs(lambda segment: speed_band(segment.mph)):
-        parts.append('<polyline points="%s" fill="none" stroke="var(--speed-%d)" stroke-width="2.5" '
+    for band, points in frame.runs(paced_band(report)):
+        parts.append('<polyline points="%s" fill="none" stroke="var(--speed-%d)" stroke-width="3" '
                      'stroke-linecap="round" stroke-linejoin="round"/>' % (points, band + 1))
+
+    parts.append(direction_carets(frame, report))
 
     for index, stop in enumerate(report.stops, start=1):
         x, y = frame.project(stop.lon, stop.lat)
@@ -557,11 +606,13 @@ def map_chart(report, aspect=None, focus=None, key="route", marks=()):
                      '<circle cx="%.1f" cy="%.1f" r="5.5" fill="var(--surface-1)" stroke="var(--series-2)" '
                      'stroke-width="2.5"/></g>' % (esc(tip), x, y, x, y))
 
-    for fix, label, colour in ((report.first_fix, "roll out", "var(--series-3)"),
-                               (report.last_fix, "last fix", "var(--text-secondary)")):
+    # Ink rather than a hue: any colour of its own would sit in or beside the speed ramp.
+    # Rolling out is a solid dot, the last fix a ring
+    for fix, label, fill, ring in ((report.first_fix, "roll out", "var(--text-primary)", "var(--surface-1)"),
+                                   (report.last_fix, "last fix", "var(--surface-1)", "var(--text-primary)")):
         x, y = frame.project(fix.lon, fix.lat)
-        parts.append('<circle cx="%.1f" cy="%.1f" r="4.5" fill="%s" stroke="var(--surface-1)" stroke-width="2"/>'
-                     % (x, y, colour))
+        parts.append('<circle cx="%.1f" cy="%.1f" r="4.5" fill="%s" stroke="%s" stroke-width="2"/>'
+                     % (x, y, fill, ring))
         anchor = "start" if x < MAP_WIDTH / 2 else "end"
         offset = 10 if anchor == "start" else -10
         parts.append('<text class="mark-label map-label" x="%.1f" y="%.1f" text-anchor="%s">%s %s</text>'
@@ -641,11 +692,10 @@ def poof_map_legend(report):
 def speed_legend(report=None):
     """The key to the track's colours
 
-    Given a report it keys only the bands that night actually reached. The car tops out
-    around 10 mph, so the fastest band is one no night can ever use, and a key to a speed
-    the vehicle cannot do is worse than no key at all.
+    Given a report it keys only the bands that night actually reached, so a night spent
+    crawling between camps is not keyed for speeds it never saw.
     """
-    used = {speed_band(segment.mph) for segment in report.segments} if report else None
+    used = {paced_band(report)(segment) for segment in report.segments} if report else None
     items = []
     for index, (_, _, label) in enumerate(SPEED_BANDS, start=1):
         if used is not None and index - 1 not in used:
@@ -653,7 +703,13 @@ def speed_legend(report=None):
         items.append('<li><span class="swatch" style="background: var(--speed-%d)"></span>%s mph</li>' % (index, esc(label)))
     items.append('<li><span class="swatch dot" style="background: var(--surface-1); '
                  'box-shadow: inset 0 0 0 2px var(--series-2)"></span>stop</li>')
-    items.append('<li><span class="swatch dot" style="background: var(--series-3)"></span>roll out</li>')
+    items.append('<li><span class="swatch dot" style="background: var(--text-primary)"></span>roll out</li>')
+    items.append('<li><span class="swatch dot" style="background: var(--surface-1); '
+                 'box-shadow: inset 0 0 0 2px var(--text-primary)"></span>last fix</li>')
+    if report is None or report.mile_marks:
+        items.append('<li><svg width="12" height="12" viewBox="-6 -6 12 12" aria-hidden="true">'
+                     '<path d="M-3,-4 L2,0 L-3,4" fill="none" stroke="var(--text-primary)" stroke-width="2" '
+                     'stroke-linecap="round" stroke-linejoin="round"/></svg>each mile, pointing the way</li>')
     return '<ul class="legend">%s</ul>' % "".join(items)
 
 

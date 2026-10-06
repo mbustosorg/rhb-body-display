@@ -14,8 +14,8 @@ browser -- everything, including the charts, is inline, so it can be handed roun
 off playa without a server. `--all` reports on every night that has data and writes
 an `index.html` over the lot, which is the one to hand round.
 
-A night runs from 9pm to 9am the following morning, which is when the car is out.
-Pass `--night` the evening date.
+A night is the 24 hours from 5pm, so an outing that rolls out before dark or comes home
+after lunch is not cut off at either end. Pass `--night` the evening date.
 
 The book
 --------
@@ -23,9 +23,15 @@ The book
     python3 make_book.py
 
 Gathers every playa night -- the shakedowns are not part of it -- and lays them out as a
-printed book, `book.html` beside the script and `Red Hot Beverly v2.0.pdf` next to it.
-US Letter portrait, 135 pages. Seasons run forwards, 2022 first, each opening on a right
-hand page behind a divider carrying the year's totals.
+printed book, `book.html` beside the script and `Red Hot Beverly.pdf` next to it.
+US Letter portrait. Seasons run forwards, 2022 first, each opening on a right hand page
+behind a divider carrying the year's totals.
+
+The seasons are gathered by car, as `PARTS` in `book_render.py` sets out: everything up
+to 2025 is Red Hot Beverly 1.0 and everything from 2026 is Red Hot Beverly 2.0. Each part
+opens on its own divider with that car's totals, and the contents is grouped the same way.
+The book carries no edition number of its own -- the title page is dated with the day it
+was built instead.
 
 A night is two spreads. The first is where it went: the route map on the left with the
 speed key, and facing it the night's figures, its speed trace and its poofs per quarter
@@ -136,19 +142,32 @@ camps were not.
   it down costs 2022, 2023 and 2024 about a tenth of a mile between them; it takes 4.8
   miles off 2025-08-25 and 6.0 off 2025-08-28, which is where that season's receiver spent
   whole minutes reporting 20 mph and more.
-* **Nothing outside the trash fence was the car.** The 2022 receiver had a failure the
-  speed limit cannot catch: it would set off in a straight line at a steady 5 mph, for
-  half an hour at a time, then reappear where the car really was. The speed is no help --
-  where it ends up is. Those runs finish two and three times further out than the fence,
-  which is a real barrier, so on a night that was out on the playa a fix beyond the edge
-  of the map is dropped. It separates cleanly: no night of 2023, 2024 or 2025 has a single
-  fix past the fence, the furthest any of them gets being 8,171 ft against a fence at
-  8,436, while every 2022 night has thousands, out to 23,780 ft. It also cut the 2022
-  mileage by about two thirds, which put those nights alongside every other season
-  instead of well past them. Only the part beyond the fence goes: following an excursion
-  back inland by how straight it runs was tried and reverted, because out on the open
-  playa a dead straight half mile is just driving, and the test threw away real nights of
-  it. So the inbound half of an excursion is still drawn, clipped at the fence.
+* **2022's latitude was made up by the monitor, and is rebuilt from its anchors.** The
+  2022 monitor logged the GPS latitude only on the first row after it started or rolled
+  to a new hourly file; every row after that it logged the previous row's latitude plus
+  exactly 0.00001 degrees, whatever the receiver said (removed from the monitor in
+  `256057d`). It compared the next fix against that invented value, so once the two were
+  180 ft apart every fix was logged, twice a second, each one 3.6 ft further north: a
+  straight run north at 5 mph until the hour turned. That is the "receiver" that used to
+  be blamed for setting off across the playa. 99% of 2022's rows were logged that way.
+  Longitude and altitude were real. The true latitude survives only at each file's first
+  row, so those are the anchors. Between them the north-south movement is reckoned from
+  the compass: each leg's real east-west step and the compass's course give its north
+  step, and every hour is bent to land on the next anchor. The van's compass is poor --
+  its steel and engine swamp the earth's field, so a full turn moves it only about 75
+  degrees, and it cannot tell north-east from south-east -- so it is read through a table
+  of what it says for each true course, measured on 2023 where the GPS was honest, and
+  shifted 20 degrees for the 2022 sensor. Scored on 2023 with all but one fix an hour
+  hidden, it put the typical point 535 ft from the truth against 581 for a straight line
+  between anchors, and the worst tenth 2,398 ft against 3,097. Snapping to streets was
+  tried as well and did worse than either, since so much of the driving is open playa.
+  `STEPPED_LATITUDE_RECKONING = False` goes back to straight lines. A file is recognised
+  by its steps rather than its year: all 140 of 2022's do it and none of the later
+  seasons'.
+* **Nothing outside the trash fence was the car.** On a night out on the playa a fix
+  beyond the edge of the map is dropped. It was written for the 2022 runs north, which
+  ended two and three times further out than the fence; with those rebuilt it is a guard
+  that should not fire.
 * **0.5 mph is the line between moving and not**, and distance, rolling time and
   stops all hang off it. A parked receiver wanders a few metres a minute, which
   reads as a tenth of a mile an hour; counting that as travel had a night in the
@@ -161,7 +180,12 @@ camps were not.
 * **Poofs** are read out of the accumulator pressure trace, which the monitor samples
   at 10Hz around every burst: a poof is a fall of at least 5 psi inside three seconds
   followed by a recharge. The on-car counter is not persisted, so this is a
-  reconstruction rather than a readback.
+  reconstruction rather than a readback. The fall is measured from the highest reading
+  of the three seconds before it. It used to be measured from the highest since the
+  last poof, which was never beaten again once a tank started to run down and every
+  recharge topped out lower: 2026-09-05 stopped counting at 23:24 with ninety minutes
+  of poofing still to come. Fixing it took the book from 7,656 poofs to 9,559, and
+  nearly every night gained some.
 * **The pressure trace is calibrated where the monitor logged it raw.** Until midway
   through 2023 the accumulator went into the log as raw ADS1115 counts and was only
   converted for the display; after that the monitor logged psi. The 2022 season is all
