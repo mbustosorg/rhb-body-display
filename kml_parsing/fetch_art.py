@@ -18,24 +18,32 @@ map layers, so a night's stops can be told what they were parked next to
     python3 fetch_art.py --year 2024
     python3 fetch_art.py            # every season the report covers
 
-The archive is public and needs no key. Only the name and the position are kept: the rest
+The archive is public and needs no key, but a season only reaches it some while after the
+event. Until then the live API has it, which does need one: set BURNINGMAN_API_KEY and a
+season the archive does not have yet is asked of the API instead. Only the name and the
+position are kept: the rest
 of each record is description, images and contact details the report has no use for. About
 one piece in twenty is registered without coordinates and is dropped, since a piece that
 cannot be placed cannot label anything.
 
     https://innovate.burningman.org/datasets-page/
+    BURNINGMAN_API_KEY=... python3 fetch_art.py --year 2026
 """
 
 import argparse
 import csv
 import json
 import os
+import urllib.error
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ARCHIVE = "https://bm-innovate.s3.amazonaws.com/archive/%d/art.json"
+# The live API, for a season not archived yet. Same records, but it wants a key
+API = "https://api.burningman.org/api/art?year=%d"
+API_KEY_VARIABLE = "BURNINGMAN_API_KEY"
 DESTINATION = os.path.join("layers", "art.csv")
-SEASONS = (2022, 2023, 2024, 2025)
+SEASONS = (2022, 2023, 2024, 2025, 2026)
 
 
 # Registrations that were never given a position carry 0.0, 0.0 rather than nothing, which
@@ -58,7 +66,22 @@ def placed(records):
 
 
 def fetch(year):
-    with urllib.request.urlopen(ARCHIVE % year, timeout=90) as response:
+    """A season's art records: the archive's if it has them, else the live API's
+
+    The archive answers a season it does not hold with 403, not 404.
+    """
+    try:
+        with urllib.request.urlopen(ARCHIVE % year, timeout=90) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as error:
+        if error.code not in (403, 404):
+            raise
+    key = os.environ.get(API_KEY_VARIABLE)
+    if not key:
+        raise SystemExit("%d is not in the archive yet -- set %s to ask the live API"
+                         % (year, API_KEY_VARIABLE))
+    request = urllib.request.Request(API % year, headers={"X-API-Key": key})
+    with urllib.request.urlopen(request, timeout=90) as response:
         return json.load(response)
 
 

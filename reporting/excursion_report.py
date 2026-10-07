@@ -16,6 +16,7 @@
 
 import argparse
 import bisect
+import collections
 import csv
 import datetime
 import io
@@ -41,9 +42,11 @@ DEFAULT_MAP = os.path.join(REPO, "rhbbodydisplay", "data")
 YEAR_MAPS = os.path.join(REPO, "kml_parsing")
 YEAR_LAYERS = "layers"
 
-# The car rolls out in the evening and comes home after sunrise
-NIGHT_START_HOUR = 21
-NIGHT_END_HOUR = 9
+# An outing is the 24 hours from 5pm. The car can roll out before dark and come home
+# after lunch, and a window of 9pm to 9am cut both ends off: 2026-09-05 had been out
+# poofing since 7:21pm, and 2022 kept going until after 9am most mornings
+NIGHT_START_HOUR = 17
+NIGHT_END_HOUR = 17
 
 # The Pi carried no realtime clock in the early seasons, so booting away from a network it
 # picked up wherever the clock had been left and stamped the whole season in its own time.
@@ -61,6 +64,7 @@ CLOCK_CORRECTIONS = {2022: datetime.timedelta(days=13)}
 
 EARTH_RADIUS_MI = 3958.7613
 FEET_PER_MILE = 5280.0
+FEET_PER_DEGREE_LAT = EARTH_RADIUS_MI * FEET_PER_MILE * math.pi / 180.0
 
 # A fix implying more than this is a GPS glitch, not the art car. The number is the car's,
 # not the receiver's: Beverly tops out around 10 mph on open playa, so anything past 12 is
@@ -83,6 +87,8 @@ OFF_MAP_MARGIN = 1.05
 # minute, which reads as a tenth of a mile an hour, so anything slower is noise
 # rather than travel. Distance, rolling time and stops all hang off this one line.
 MOVING_MPH = 0.5
+# A direction caret is drawn on the route map at every one of these driven
+MILE_MARK_MI = 1.0
 # A parked cluster has to hold this long, within this radius, to count as a stop
 STOP_MIN_SECONDS = 300.0
 STOP_RADIUS_FT = 120.0
@@ -102,6 +108,9 @@ POOF_RECOVERY_FRACTION = 0.9
 POOF_RECOVERY_LIMIT = 120.0
 # Poofs to smooth the supply pressure across when drawing its trend
 SUPPLY_WINDOW = 15
+# The pressure is drawn as the highest reading in each minute: what the accumulator
+# recharged to, which is the supply the poofer had, with the poofs themselves left out
+PRESSURE_PROFILE_SECONDS = 60
 
 # Until midway through 2023 the monitor logged the accumulator as raw ADS1115 counts and
 # only converted them for the display; after that it logged calibrated psi. The 2022 season
@@ -137,6 +146,42 @@ ASSUMED_KELVIN = 293.15
 # of the older kind, and a pattern that only knew the newer one made it invisible
 FILE_PATTERN = re.compile(r"^(?P<stream>[a-z_]+)_(?P<stamp>\d{8}_\d{2}(?:_\d{2})?)\.csv$")
 STAMP_FORMATS = ("%Y%m%d_%H_%M", "%Y%m%d_%H")
+# The 2022 monitor's made-up latitude: each row the last one plus exactly this. A file is
+# taken to carry it when this share of its steps are exactly that, which every 2022 file
+# does (the least of them well over nine in ten) and no later one comes near
+LATITUDE_STEP = 0.00001
+STEPPED_FRACTION = 0.8
+# Anchors further apart than this are a Pi that was off, not an hour of driving
+ANCHOR_SPAN_MAX = datetime.timedelta(minutes=90)
+# Between the anchors the north-south movement is steered by the compass. False draws the
+# latitude straight from one anchor to the next instead
+STEPPED_LATITUDE_RECKONING = True
+# What the van's compass reads for each 10 degree band of true course, keyed by the band's
+# middle. The steel and the V-8 swamp the earth's field, so a full turn moves it only about
+# 75 degrees, and anything from 45 to 125 true reads near 157 -- it cannot tell north-east
+# from south-east, and is only worth having alongside the honest east-west movement.
+# Measured on 2023-08-27, -29, -30 and -31, where the GPS was honest, as the circular mean
+# of the compass over each leg moving 3 to 12 mph. Scored on 2023 with all but one fix an
+# hour hidden, reckoning from it cut the typical latitude error from 581 ft to 535 and the
+# worst tenth from 3,097 ft to 2,398, against drawing straight between the anchors
+COMPASS_BY_COURSE = {
+    5: 212, 15: 201, 25: 186, 35: 171, 45: 159, 55: 154, 65: 155, 75: 153, 85: 156,
+    95: 160, 105: 158, 115: 160, 125: 162, 135: 167, 145: 171, 155: 178, 165: 181,
+    175: 184, 185: 187, 195: 191, 205: 194, 215: 197, 225: 200, 235: 206, 245: 209,
+    255: 212, 265: 216, 275: 217, 285: 221, 295: 221, 305: 225, 315: 228, 325: 230,
+    335: 229, 345: 227, 355: 221}
+# The 2022 sensor reads this much under 2023's for the same course: the median over 176
+# legs of 2022 running fast enough east or west that the honest longitude says which
+STEPPED_COMPASS_SHIFT = -20.0
+# How close a reading must come to a band's to be taken as that course
+COMPASS_MATCH_DEG = 8.0
+# Compass readings averaged either side of a fix
+COMPASS_WINDOW = datetime.timedelta(seconds=10)
+# Nothing on the van goes faster, so no step north is allowed to imply more
+RECKONING_MAX_MPH = 12.0
+# A row stamped earlier than the one before it by more than this is the clock being set
+# back, not rows written out of order
+CLOCK_STEP_MIN = datetime.timedelta(minutes=1)
 
 
 # ---------------------------------------------------------------- data loading
@@ -186,24 +231,105 @@ def number(row, key):
         return None
 
 
-def read_rows(handle, start, end):
-    """Rows of an open log file that fall inside the window"""
-    rows = []
-    for row in csv.DictReader(handle):
-        stamp = parse_timestamp(row.get("timestamp"))
+def clock_steps(stamps):
+    """Where the clock was set back part way through a file, and by how much
+
+    The Pi comes up with its clock about seven hours fast -- the UTC time read as if it
+    were Pacific -- and the first GPS fix sets it right. Rows are written in the order they
+    were taken, so the fix shows as the time going backwards between one row and the next,
+    and every row before that point was stamped on the wrong clock. Returns (index, step)
+    for each, the index being the first row on the corrected clock.
+    """
+    steps = []
+    for index in range(1, len(stamps)):
+        if stamps[index] is None or stamps[index - 1] is None:
+            continue
+        step = stamps[index - 1] - stamps[index]
+        if step > CLOCK_STEP_MIN:
+            steps.append((index, step))
+    return steps
+
+
+def read_rows(handle, start, end, step_hint=lambda: None):
+    """Rows of an open log file that fall inside the window, on the corrected clock
+
+    `step_hint` gives how far the clock was set back, measured on a stream sampled closely
+    enough to time it. Pressure is only logged around a poof, so its next row can come
+    minutes after the fix, and the jump in its own file comes out short by those minutes.
+    It is only asked for when the file has a step, so a clean file costs nothing extra.
+    """
+    rows = list(csv.DictReader(handle))
+    stamps = [parse_timestamp(row.get("timestamp")) for row in rows]
+    segment = 0
+    steps = clock_steps(stamps)
+    hint = step_hint() if steps else None
+    for index, step in steps:
+        # The hint times the first step; a later one in the same file has only its own gap
+        shift = hint if hint is not None and index == steps[0][0] else step
+        for earlier in range(segment, index):
+            if stamps[earlier] is not None:
+                stamps[earlier] -= shift
+        segment = index
+    kept = []
+    for row, stamp in zip(rows, stamps):
         if stamp is None or not start <= stamp < end:
             continue
         row["timestamp"] = stamp
-        rows.append(row)
-    return rows
+        kept.append(row)
+    return kept
+
+
+_clock_steps = {}
+
+
+def boot_clock_step(root, name):
+    """How far the clock was set back in the persist a log file belongs to, if it was
+
+    Heading is logged ten times a second, so the gap across the fix is the step to within
+    a tenth of one. Every stream written in the same persist was on the same clock.
+    """
+    match = FILE_PATTERN.match(os.path.basename(name))
+    if not match:
+        return None
+    key = (root, match.group("stamp"))
+    if key in _clock_steps:
+        return _clock_steps[key]
+    step = None
+    sibling = "heading_%s.csv" % match.group("stamp")
+    handle = None
+    if os.path.exists(os.path.join(root, sibling)):
+        handle = open(os.path.join(root, sibling), newline="")
+    else:
+        for entry in sorted(os.listdir(root)):
+            if entry.startswith("heading_") and entry.endswith(".zip"):
+                archive = zipfile.ZipFile(os.path.join(root, entry))
+                members = [member for member in archive.namelist()
+                           if os.path.basename(member) == sibling]
+                if members:
+                    handle = io.TextIOWrapper(archive.open(members[0]), "utf-8")
+                    break
+    if handle is not None:
+        with handle:
+            stamps = [parse_timestamp(row.get("timestamp")) for row in csv.DictReader(handle)]
+        steps = clock_steps(stamps)
+        if steps:
+            index, gap = steps[0]
+            # Less one sample interval, which is time that really passed across the fix
+            interval = stamps[index - 1] - stamps[index - 2] if index >= 2 else datetime.timedelta(0)
+            step = gap + interval
+    _clock_steps[key] = step
+    return step
 
 
 def load_stream(root, stream, start, end):
     """Rows of one sensor stream, from loose CSVs or from the season archives"""
-    rows = []
+    files = []
     # A file is named for the moment it was persisted, so it holds the preceding interval
     margin = datetime.timedelta(days=1)
     prefix = stream + "_"
+    # Positions are read a day either side, so the latitude repair has the anchors around
+    # the window as well as inside it; everything is trimmed to the window afterwards
+    lo, hi = (start - margin, end + margin) if stream == "positions" else (start, end)
     for entry in sorted(os.listdir(root)):
         path = os.path.join(root, entry)
         if entry.startswith(prefix) and entry.endswith(".zip"):
@@ -215,15 +341,141 @@ def load_stream(root, stream, start, end):
                     if not os.path.basename(name).startswith(prefix):
                         continue
                     with archive.open(name) as member:
-                        rows.extend(read_rows(io.TextIOWrapper(member, "utf-8"), start, end))
+                        files.append(read_rows(io.TextIOWrapper(member, "utf-8"), lo, hi,
+                                               lambda: boot_clock_step(root, name)))
         elif entry.startswith(prefix) and entry.endswith(".csv"):
             stamp = stamp_of(entry)
             if stamp is not None and not start - margin <= stamp <= end + margin:
                 continue
             with open(path, newline="") as handle:
-                rows.extend(read_rows(handle, start, end))
+                files.append(read_rows(handle, lo, hi, lambda: boot_clock_step(root, entry)))
+    if stream == "positions":
+        repair_stepped_latitude(files, root, lo, hi)
+    rows = [row for rows in files for row in rows if start <= row["timestamp"] < end]
     rows.sort(key=lambda row: row["timestamp"])
     return rows
+
+
+def stepped_latitude(rows):
+    """Does a position file carry the 2022 monitor's made-up latitude?
+
+    That monitor logged the GPS latitude only on the first row after it started or rolled
+    to a new hourly file. Every row after that it logged the previous row's latitude plus
+    exactly 0.00001 degrees, whatever the receiver said, so the file climbs north in
+    identical steps. Real fixes never do that more than now and then.
+    """
+    lats = [number(row, "lat") for row in rows]
+    lats = [lat for lat in lats if lat is not None]
+    if len(lats) < 3:
+        return False
+    steps = [round((after - before) / LATITUDE_STEP) for before, after in zip(lats, lats[1:])]
+    return sum(1 for step in steps if step == 1) >= STEPPED_FRACTION * len(steps)
+
+
+def repair_stepped_latitude(files, root=None, start=None, end=None):
+    """Put a believable latitude back into files whose own is made up
+
+    Only a file's first row is a real fix, so those are the anchors. Between them the
+    latitude is first drawn straight from one to the next, and then, unless
+    STEPPED_LATITUDE_RECKONING is off, steered by the compass (see reckon_latitude). It is
+    not where the car went -- that was never recorded -- but it is pinned to where it
+    really was once an hour, where the logged one ran away north at five miles an hour
+    until the hour turned. Longitude and altitude were logged honestly and are left alone.
+    Across a gap longer than ANCHOR_SPAN_MAX the Pi was off and the latitude is held
+    rather than drawn across it.
+    """
+    affected = [rows for rows in files if rows and stepped_latitude(rows)]
+    if not affected:
+        return
+    anchors = sorted((rows[0]["timestamp"], number(rows[0], "lat")) for rows in affected
+                     if number(rows[0], "lat") is not None)
+    times = [when for when, _ in anchors]
+    for rows in affected:
+        for row in rows:
+            if number(row, "lat") is None:
+                continue
+            index = bisect.bisect_right(times, row["timestamp"]) - 1
+            if index < 0:
+                continue
+            when, lat = anchors[index]
+            if index + 1 < len(anchors):
+                later, next_lat = anchors[index + 1]
+                span = (later - when).total_seconds()
+                if 0 < span <= ANCHOR_SPAN_MAX.total_seconds():
+                    lat += (next_lat - lat) * (row["timestamp"] - when).total_seconds() / span
+            row["lat"] = "%.7f" % lat
+    if STEPPED_LATITUDE_RECKONING and root is not None:
+        heading = load_stream(root, "heading", start, end)
+        for rows, following in zip(sorted(affected, key=lambda rows: rows[0]["timestamp"]),
+                                   sorted(affected, key=lambda rows: rows[0]["timestamp"])[1:] + [None]):
+            reckon_latitude(rows, following[0] if following else None, heading)
+
+
+def compass_reading(times, values, when):
+    """Circular mean of the compass around a moment, or None if it said nothing near it"""
+    low = bisect.bisect_left(times, when - COMPASS_WINDOW)
+    high = bisect.bisect_right(times, when + COMPASS_WINDOW)
+    near = values[low:high]
+    if not near:
+        return None
+    return math.degrees(math.atan2(sum(math.sin(math.radians(v)) for v in near),
+                                   sum(math.cos(math.radians(v)) for v in near))) % 360
+
+
+def reckon_latitude(rows, next_anchor, heading):
+    """Steer one file's interpolated latitude north and south by the compass
+
+    Each leg's east-west step is real. Its course is read off the compass through
+    COMPASS_BY_COURSE, keeping only courses on the side the car really went; where the
+    compass allows more than one, the one closest to the straight-line drawing wins. The
+    north step follows from the two, and the run is bent so it lands on the next anchor.
+    A leg the compass cannot help with keeps the straight-line step.
+    """
+    rows = [row for row in rows if number(row, "lat") is not None]
+    if len(rows) < 2:
+        return
+    times = [row["timestamp"] for row in heading if number(row, "heading") is not None]
+    values = [number(row, "heading") for row in heading if number(row, "heading") is not None]
+    curve = [(course, (reading + STEPPED_COMPASS_SHIFT) % 360)
+             for course, reading in sorted(COMPASS_BY_COURSE.items())]
+    base = [number(row, "lat") for row in rows]
+    north = [0.0]
+    for before, after, lat_before, lat_after in zip(rows, rows[1:], base, base[1:]):
+        prior = (lat_after - lat_before) * FEET_PER_DEGREE_LAT
+        seconds = max((after["timestamp"] - before["timestamp"]).total_seconds(), 0.1)
+        east = (haversine_mi(lat_after, number(before, "lon"), lat_after, number(after, "lon"))
+                * FEET_PER_MILE * (1 if number(after, "lon") > number(before, "lon") else -1))
+        reading = compass_reading(times, values, after["timestamp"]) if times else None
+        step = prior
+        if reading is not None and abs(east) >= 3.0:
+            limit = RECKONING_MAX_MPH * FEET_PER_MILE / 3600.0 * seconds
+            best = None
+            for course, expected in curve:
+                if (course < 180) != (east > 0):
+                    continue
+                if abs(((expected - reading + 180) % 360) - 180) > COMPASS_MATCH_DEG:
+                    continue
+                sine = math.sin(math.radians(course))
+                if abs(sine) < 0.2:
+                    continue
+                candidate = max(-limit, min(limit, east * math.cos(math.radians(course)) / sine))
+                if best is None or abs(candidate - prior) < abs(best - prior):
+                    best = candidate
+            if best is not None:
+                step = best
+        north.append(north[-1] + step)
+    anchor = base[0]
+    miss, span = 0.0, 0.0
+    if next_anchor is not None and number(next_anchor, "lat") is not None:
+        span = (next_anchor["timestamp"] - rows[0]["timestamp"]).total_seconds()
+        if 0 < span <= ANCHOR_SPAN_MAX.total_seconds():
+            # How far the reckoned run ends from the next real fix, shared out over the hour
+            miss = (number(next_anchor, "lat") - anchor) * FEET_PER_DEGREE_LAT - north[-1]
+        else:
+            span = 0.0
+    for row, travelled in zip(rows, north):
+        bend = miss * (row["timestamp"] - rows[0]["timestamp"]).total_seconds() / span if span else 0.0
+        row["lat"] = "%.7f" % (anchor + (travelled + bend) / FEET_PER_DEGREE_LAT)
 
 
 def available_nights(root):
@@ -256,7 +508,7 @@ def available_nights(root):
 
 
 def night_of(stamp):
-    """The night a moment belongs to, or None if it happened in daylight"""
+    """The outing a moment belongs to, or None if it falls between two outing windows"""
     if stamp.hour < NIGHT_END_HOUR:
         return (stamp - datetime.timedelta(days=1)).date()
     if stamp.hour >= NIGHT_START_HOUR:
@@ -521,6 +773,8 @@ class Report:
     speed_series: List[Tuple[datetime.datetime, Optional[float]]]
     poof_bins: List[Tuple[datetime.datetime, int]]
     temperature: List[Tuple[datetime.datetime, float]] = field(default_factory=list)
+    # Accumulator pressure, the highest reading in each minute
+    pressure_series: List[Tuple[datetime.datetime, float]] = field(default_factory=list)
     gaps: List[Tuple[datetime.datetime, datetime.datetime, float]] = field(default_factory=list)
     glitches: int = 0
     # The pressure trace arrived as raw ADC counts and was converted to psi here
@@ -560,6 +814,25 @@ class Report:
         """Fastest minute of the night, as (moment, mph)"""
         paced = [(when, mph) for when, mph in self.speed_series if mph is not None]
         return max(paced, key=lambda pair: pair[1]) if paced else None
+
+    @property
+    def mile_marks(self):
+        """Where each whole mile driven was reached, as (segment, fraction along it)
+
+        Counted the way the distance is, over legs that were really moving, so the last
+        mark falls inside the night's own mileage. The map turns each into a caret pointing
+        the way the car was going.
+        """
+        marks = []
+        driven, next_mark = 0.0, MILE_MARK_MI
+        for segment in self.segments:
+            if segment.mph < MOVING_MPH or not segment.miles:
+                continue
+            while driven + segment.miles >= next_mark:
+                marks.append((segment, (next_mark - driven) / segment.miles))
+                next_mark += MILE_MARK_MI
+            driven += segment.miles
+        return marks
 
     @property
     def trusted(self):
@@ -840,34 +1113,46 @@ def find_poofs(rows):
 
     The monitor samples pressure at 10Hz around every burst, so a poof shows up as a
     sharp fall of tens of psi inside a second followed by a slow recharge.
+
+    The fall is measured from the highest reading of the few seconds before it, not from
+    the highest since the last poof. As a tank runs down every recharge tops out a little
+    lower than the one before, and a peak held until something beat it was never beaten
+    again: on 2026-09-05 the supply reached 60.5 psi at 23:27 and not one of the hundreds
+    of poofs in the ninety minutes after it, all falling from 58 or less, was counted.
     """
     samples = [(row["timestamp"], number(row, "level")) for row in rows]
     samples = [sample for sample in samples if sample[1] is not None]
     poofs = []
     marks = []
-    peak = None
+    # The readings of the last POOF_FALL_SECONDS, oldest first, while waiting for a fall
+    recent = collections.deque()
     falling = False
-    bottom = None
+    peak = bottom = None
     for index, (when, level) in enumerate(samples):
         if index and (when - samples[index - 1][0]).total_seconds() > POOF_EPISODE_GAP:
-            peak, falling = (when, level), False
-        if peak is None:
-            peak = (when, level)
+            recent.clear()
+            falling = False
+        if falling:
+            if level < bottom[1]:
+                bottom = (when, level)
+            elif level > bottom[1] + POOF_RECOVERY_PSI:
+                # The pressure it fell from is the supply the poofer had to draw on
+                poofs.append(Poof(peak[0], peak[1] - bottom[1], (bottom[0] - peak[0]).total_seconds(), peak[1]))
+                marks.append(index)
+                falling = False
+                # The poof's own fall is behind it, so the next one is measured from here
+                recent.clear()
+                recent.append((when, level))
             continue
-        if level >= peak[1] and not falling:
-            peak = (when, level)
-            continue
-        if not falling:
-            if peak[1] - level >= POOF_DROP_PSI and (when - peak[0]).total_seconds() <= POOF_FALL_SECONDS:
-                falling, bottom = True, (when, level)
-            continue
-        if level < bottom[1]:
-            bottom = (when, level)
-        elif level > bottom[1] + POOF_RECOVERY_PSI:
-            # The pressure it fell from is the supply the poofer had to draw on
-            poofs.append(Poof(peak[0], peak[1] - bottom[1], (bottom[0] - peak[0]).total_seconds(), peak[1]))
-            marks.append(index)
-            falling, peak = False, (when, level)
+        while recent and (when - recent[0][0]).total_seconds() > POOF_FALL_SECONDS:
+            recent.popleft()
+        if recent:
+            # The latest of equal highs, as the reading the fall actually left from
+            highest = max(reversed(recent), key=lambda sample: sample[1])
+            if highest[1] - level >= POOF_DROP_PSI:
+                falling, peak, bottom = True, highest, (when, level)
+                continue
+        recent.append((when, level))
     measure_recovery(poofs, marks, samples)
     return poofs
 
@@ -901,7 +1186,13 @@ def locate_poofs(poofs, fixes):
             continue
         span = (after.timestamp - before.timestamp).total_seconds()
         if span > GAP_SECONDS:
-            # Straddling a hole in the position log, so where it happened is a guess
+            # Positions are only logged when the car moves, so a long silence that ends where
+            # it began is the car parked, and the poof happened there -- the same reading
+            # build_segments gives it. One that covered ground is a hole in the log, and
+            # where along it the poof happened is a guess
+            moved_ft = haversine_mi(before.lat, before.lon, after.lat, after.lon) * FEET_PER_MILE
+            if moved_ft <= STOP_RADIUS_FT:
+                poof.lat, poof.lon = before.lat, before.lon
             continue
         share = (poof.timestamp - before.timestamp).total_seconds() / span if span else 0.0
         poof.lat = before.lat + (after.lat - before.lat) * share
@@ -912,6 +1203,25 @@ def propane_pounds(psi_drawn, gallons, kelvin=ASSUMED_KELVIN):
     """Mass behind a total accumulator draw, given the accumulator's volume"""
     moles = psi_drawn * PASCALS_PER_PSI * gallons * CUBIC_M_PER_GALLON / (GAS_CONSTANT * kelvin)
     return moles * PROPANE_KG_PER_MOL * POUNDS_PER_KG
+
+
+def pressure_profile(rows, seconds=PRESSURE_PROFILE_SECONDS):
+    """The accumulator pressure through the night, as the highest reading in each interval
+
+    The trace is ten samples a second, far more than a page can draw. Each interval keeps
+    its peak, which is where the accumulator recharged to between poofs.
+    """
+    peaks = {}
+    for row in rows:
+        level = number(row, "level")
+        if level is None:
+            continue
+        stamp = row["timestamp"]
+        slot = stamp - datetime.timedelta(seconds=(stamp.minute * 60 + stamp.second) % seconds,
+                                          microseconds=stamp.microsecond)
+        if slot not in peaks or level > peaks[slot]:
+            peaks[slot] = level
+    return sorted(peaks.items())
 
 
 def bin_poofs(poofs, start, end, minutes=15):
@@ -986,7 +1296,10 @@ def build_report(data_root, map_root, night, accumulator_gallons=None):
                 stop.poofs += 1
                 break
 
-    temperature = load_stream(data_root, "temp", start, end)
+    # Since 2026 the bath reports its own water temperature, and the monitor logs it to
+    # the water stream rather than temp
+    temperature = load_stream(data_root, "temp", start, end) + load_stream(data_root, "water", start, end)
+    temperature.sort(key=lambda row: row["timestamp"])
     heading = load_stream(data_root, "heading", start, end)
 
     return Report(
@@ -995,6 +1308,7 @@ def build_report(data_root, map_root, night, accumulator_gallons=None):
         speed_series=pace(segments, start, end),
         poof_bins=bin_poofs(poofs, start, end),
         temperature=series_of(temperature, "temp_f"),
+        pressure_series=[] if chattering else pressure_profile(pressure),
         gaps=gaps, glitches=glitches, calibrated=calibrated, chattering=chattering,
         # A correction is days, not months, so a corrected night is still in its own season
         clock_shift=CLOCK_CORRECTIONS.get(night.year),
