@@ -57,6 +57,16 @@ float upper_temp = 75.0;
 float engine = 0.0;
 float moving = 0.0;
 float poof_count = 0.0;
+// The poof button. rhb-poof-controller sends /poof 1.0 on press and 0.0 on release, the
+// release three times over. oscEvent runs on oscP5's thread, so it only records the level
+// and when it last changed; draw() owns everything that moves
+volatile boolean poofHeld = false;
+volatile int poofChanged = -100000;
+// A release that never arrives should not leave POOF on the screen all night
+int POOF_MAX_MS = 15000;
+// How long POOF takes to blow away once the button is let go
+int POOF_FADE_MS = 700;
+ArrayList<PoofFlame> poofFlames = new ArrayList<PoofFlame>();
 float translate_lon = 0.0;
 float translate_lat = 0.0;
 float ORIGIN_LON =  -119.2175207;
@@ -392,6 +402,14 @@ float effectSeconds() {
 }
 
 
+// fullScreen() belongs in settings(), which runs before setup() and before the window
+// exists. The PDE's preprocessor will hoist a fullScreen() out of setup() for you, but
+// only from setup()'s top level, and it is not worth depending on: stated here it is
+// unambiguous, and width and height are real by the time buildShapes() projects with them
+void settings() {
+  fullScreen();
+}
+
 void setup() {
   coords = new ArrayList<PVector>();
   firstAid = new ArrayList<PVector>();
@@ -416,7 +434,12 @@ void setup() {
   setupPlaces();
   buildMarkerShapes();
 
-  fullScreen();
+  // Full screen on the Pi is an undecorated window the size of the display, not an
+  // exclusive display mode, so the desktop panel -- which ships set to keep above other
+  // windows -- carries on drawing over the top of it. Ask to be above the panel instead.
+  // The dashboard is the only thing on that screen; nothing needs to get in front of it
+  surface.setAlwaysOnTop(true);
+  noCursor();
   oscP5 = new OscP5(this, 10002);
   // Was ten a second, on the grounds that a frame was expensive. Measured, a frame costs
   // about 8ms: 6.4 for the city and its streets, 0.4 for the markers, 1 for the
@@ -573,8 +596,11 @@ void draw() {
   rotate(PI);
 
   sectionStart();
-  sparkline(310, 150, 150, 50, 0, 100, 30, 80, track_pressure);
-  sparkline(310, 350, 150, 50, 60, 85, lower_temp, upper_temp, track_temperature);
+  // Centred at 310 these started at x = 235, but the rotary dials beside them reach to
+  // x = 255 (disc 200 wide plus the 10 the arc adds) and are drawn afterwards, so they
+  // painted over the oldest eighth of every trace. Centred at 340 the boxes begin at 265
+  sparkline(340, 150, 150, 50, 0, 100, 30, 80, track_pressure);
+  sparkline(340, 350, 150, 50, 60, 85, lower_temp, upper_temp, track_temperature);
   noStroke();
   textSize(60);
   fill(cText);
@@ -628,6 +654,7 @@ void draw() {
       circle(b.x, b.y, 18);
     }
   }
+  drawPoof();
   msInstruments = sectionEnd(msInstruments);
   if (showFrameTime) {
     // Averaged over about a second, because a single frame bounces around too much to read
@@ -1350,6 +1377,110 @@ void handlePoofCount(float new_value) {
   poof_count = new_value;
 }
 
+// Handle the poof button. Only a change of level counts, so the repeated releases do not
+// restart the fade
+void handlePoof(float new_value) {
+  boolean held = new_value > 0.5;
+  if (held != poofHeld) {
+    poofHeld = held;
+    poofChanged = millis();
+  }
+}
+
+// One lick of fire rising off the bottom of the screen while the button is held
+class PoofFlame {
+  float x, y, vx, vy, r;
+  PoofFlame() {
+    x = random(width);
+    y = height + random(20, 80);
+    vx = random(-1.5, 1.5);
+    vy = -random(10, 22);
+    r = random(18, 55);
+  }
+  // False once it has burned out or left the top of the screen
+  boolean update() {
+    x += vx + 3 * (noise(x * 0.01, y * 0.01, millis() * 0.002) - 0.5);
+    y += vy;
+    r *= 0.985;
+    return r > 4 && y > -2 * r;
+  }
+}
+
+// POOF while the button is held: the screen glows, fire rolls up from the bottom, and the
+// word bounces in with every letter jumping in the heat. Let go and the word blows up
+// and away while the last of the flames carry on up the screen.
+void drawPoof() {
+  int now = millis();
+  int since = now - poofChanged;
+  boolean held = poofHeld && since < POOF_MAX_MS;
+  // 1 while held, falling to 0 over POOF_FADE_MS after the release
+  float fade = 1;
+  if (!held) {
+    int after = poofHeld ? since - POOF_MAX_MS : since;
+    fade = 1 - after / float(POOF_FADE_MS);
+  }
+  if (fade <= 0 && poofFlames.isEmpty()) return;
+
+  pushStyle();
+  noStroke();
+  if (fade > 0) {
+    fill(cBurn, 70 * fade * (0.6 + 0.4 * noise(now * 0.01)));
+    rect(0, 0, width, height);
+  }
+
+  if (held) {
+    for (int i = 0; i < 2; i++) poofFlames.add(new PoofFlame());
+  }
+  for (int i = poofFlames.size() - 1; i >= 0; i--) {
+    PoofFlame f = poofFlames.get(i);
+    if (!f.update()) poofFlames.remove(i);
+    else drawFlame(f.x, f.y, f.r);
+  }
+
+  if (fade > 0) {
+    // Pops in past full size and settles, then swells as it fades on the release
+    float scaleBy;
+    if (held) {
+      float t = min(since / 250.0, 1);
+      float c1 = 1.70158;
+      scaleBy = 1 + (c1 + 1) * pow(t - 1, 3) + c1 * pow(t - 1, 2);
+    } else {
+      scaleBy = 1 + 0.8 * (1 - fade);
+    }
+    String word = "POOF!";
+    textSize(min(width, height) * 0.26);
+    textAlign(CENTER, CENTER);
+    float shake = 8 * fade;
+    pushMatrix();
+    translate(width / 2.0 + random(-shake, shake), height / 2.0 + random(-shake, shake));
+    scale(scaleBy);
+    float total = textWidth(word);
+    float cursor = -total / 2.0;
+    for (int i = 0; i < word.length(); i++) {
+      String ch = word.substring(i, i + 1);
+      float w = textWidth(ch);
+      float hop = -abs(sin(now * 0.012 + i * 0.9)) * 30 * fade;
+      float tilt = 0.12 * sin(now * 0.009 + i * 1.7) * fade;
+      pushMatrix();
+      translate(cursor + w / 2.0, hop);
+      rotate(tilt);
+      // A dark rim so the word stays readable over the fire behind it
+      fill(0, 200 * fade);
+      for (int dx = -4; dx <= 4; dx += 4) {
+        for (int dy = -4; dy <= 4; dy += 4) {
+          if (dx != 0 || dy != 0) text(ch, dx, dy);
+        }
+      }
+      fill(lerpColor(cBurn, cBurnCore, noise(i * 2.3, now * 0.006)), 255 * fade);
+      text(ch, 0, 0);
+      popMatrix();
+      cursor += w;
+    }
+    popMatrix();
+  }
+  popStyle();
+}
+
 // Handle a new OSC message
 void oscEvent(OscMessage theOscMessage) {
   try {
@@ -1368,6 +1499,7 @@ void oscEvent(OscMessage theOscMessage) {
     else if (message.equals("/engine")) handleEngine(theOscMessage.get(0).floatValue());
     else if (message.equals("/moving")) handleMoving(theOscMessage.get(0).floatValue());
     else if (message.equals("/poof_count")) handlePoofCount(theOscMessage.get(0).floatValue());
+    else if (message.equals("/poof")) handlePoof(theOscMessage.get(0).floatValue());
   }
   catch (Exception e) {
     println(e);
@@ -1546,6 +1678,8 @@ void keyPressed() {
       currentReplaySession = (currentReplaySession - 1 + n) % n;
       if (replaying) startReplay();
     }
+  } else if (key == 'p' || key == 'P') {
+    handlePoof(poofHeld ? 0.0 : 1.0);
   } else if (key == 'f' || key == 'F') {
     showFrameTime = !showFrameTime;
     frameMillis = 0;
