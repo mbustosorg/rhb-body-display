@@ -64,9 +64,11 @@ volatile boolean poofHeld = false;
 volatile int poofChanged = -100000;
 // A release that never arrives should not leave POOF on the screen all night
 int POOF_MAX_MS = 15000;
-// How long POOF takes to blow away once the button is let go
-int POOF_FADE_MS = 700;
-ArrayList<PoofFlame> poofFlames = new ArrayList<PoofFlame>();
+// How long the pill behind the poof counter takes to fade once the button is let go
+int POOF_FADE_MS = 300;
+// While held the pill flicks between the two flame colours this often, so even a short
+// poof lands on a lit frame rather than a dark one
+int POOF_FLASH_MS = 150;
 float translate_lon = 0.0;
 float translate_lat = 0.0;
 float ORIGIN_LON =  -119.2175207;
@@ -603,9 +605,12 @@ void draw() {
   sparkline(340, 350, 150, 50, 60, 85, lower_temp, upper_temp, track_temperature);
   noStroke();
   textSize(60);
-  fill(cText);
+  String poofs = str(int(poof_count));
+  // Dark text on the pill, which is orange in either theme
+  fill(drawPoofPill(30, 250 + textWidth(poofs), 560) ? color(20) : cText);
   neonText("Poofs:", 30, 560);
-  neonText(str(int(poof_count)), 250, 560);
+  neonText(poofs, 250, 560);
+  fill(cText);
   neonText("Heater:", 30, 620);
   if (water_heater > 0.0) {
     if (flashOn) fill(cHeaterOn);
@@ -654,7 +659,6 @@ void draw() {
       circle(b.x, b.y, 18);
     }
   }
-  drawPoof();
   msInstruments = sectionEnd(msInstruments);
   if (showFrameTime) {
     // Averaged over about a second, because a single frame bounces around too much to read
@@ -1387,31 +1391,11 @@ void handlePoof(float new_value) {
   }
 }
 
-// One lick of fire rising off the bottom of the screen while the button is held
-class PoofFlame {
-  float x, y, vx, vy, r;
-  PoofFlame() {
-    x = random(width);
-    y = height + random(20, 80);
-    vx = random(-1.5, 1.5);
-    vy = -random(10, 22);
-    r = random(18, 55);
-  }
-  // False once it has burned out or left the top of the screen
-  boolean update() {
-    x += vx + 3 * (noise(x * 0.01, y * 0.01, millis() * 0.002) - 0.5);
-    y += vy;
-    r *= 0.985;
-    return r > 4 && y > -2 * r;
-  }
-}
-
-// POOF while the button is held: the screen glows, fire rolls up from the bottom, and the
-// word bounces in with every letter jumping in the heat. Let go and the word blows up
-// and away while the last of the flames carry on up the screen.
-void drawPoof() {
-  int now = millis();
-  int since = now - poofChanged;
+// An orange pill behind the poof counter while the button is held, spanning the text from
+// left to right with its baseline at y. Uses the current text size. True while it is lit
+// enough that the text over it should go dark
+boolean drawPoofPill(float left, float right, float y) {
+  int since = millis() - poofChanged;
   boolean held = poofHeld && since < POOF_MAX_MS;
   // 1 while held, falling to 0 over POOF_FADE_MS after the release
   float fade = 1;
@@ -1419,66 +1403,17 @@ void drawPoof() {
     int after = poofHeld ? since - POOF_MAX_MS : since;
     fade = 1 - after / float(POOF_FADE_MS);
   }
-  if (fade <= 0 && poofFlames.isEmpty()) return;
-
+  if (fade <= 0) return false;
+  float pad = 16;
+  float top = y - textAscent() - pad / 2;
+  float h = textAscent() + textDescent() + pad;
+  boolean bright = held && (since / POOF_FLASH_MS) % 2 == 1;
   pushStyle();
   noStroke();
-  if (fade > 0) {
-    fill(cBurn, 70 * fade * (0.6 + 0.4 * noise(now * 0.01)));
-    rect(0, 0, width, height);
-  }
-
-  if (held) {
-    for (int i = 0; i < 2; i++) poofFlames.add(new PoofFlame());
-  }
-  for (int i = poofFlames.size() - 1; i >= 0; i--) {
-    PoofFlame f = poofFlames.get(i);
-    if (!f.update()) poofFlames.remove(i);
-    else drawFlame(f.x, f.y, f.r);
-  }
-
-  if (fade > 0) {
-    // Pops in past full size and settles, then swells as it fades on the release
-    float scaleBy;
-    if (held) {
-      float t = min(since / 250.0, 1);
-      float c1 = 1.70158;
-      scaleBy = 1 + (c1 + 1) * pow(t - 1, 3) + c1 * pow(t - 1, 2);
-    } else {
-      scaleBy = 1 + 0.8 * (1 - fade);
-    }
-    String word = "POOF!";
-    textSize(min(width, height) * 0.26);
-    textAlign(CENTER, CENTER);
-    float shake = 8 * fade;
-    pushMatrix();
-    translate(width / 2.0 + random(-shake, shake), height / 2.0 + random(-shake, shake));
-    scale(scaleBy);
-    float total = textWidth(word);
-    float cursor = -total / 2.0;
-    for (int i = 0; i < word.length(); i++) {
-      String ch = word.substring(i, i + 1);
-      float w = textWidth(ch);
-      float hop = -abs(sin(now * 0.012 + i * 0.9)) * 30 * fade;
-      float tilt = 0.12 * sin(now * 0.009 + i * 1.7) * fade;
-      pushMatrix();
-      translate(cursor + w / 2.0, hop);
-      rotate(tilt);
-      // A dark rim so the word stays readable over the fire behind it
-      fill(0, 200 * fade);
-      for (int dx = -4; dx <= 4; dx += 4) {
-        for (int dy = -4; dy <= 4; dy += 4) {
-          if (dx != 0 || dy != 0) text(ch, dx, dy);
-        }
-      }
-      fill(lerpColor(cBurn, cBurnCore, noise(i * 2.3, now * 0.006)), 255 * fade);
-      text(ch, 0, 0);
-      popMatrix();
-      cursor += w;
-    }
-    popMatrix();
-  }
+  fill(bright ? cBurnCore : cBurn, 255 * fade);
+  rect(left - pad, top, right - left + 2 * pad, h, h / 2);
   popStyle();
+  return fade > 0.5;
 }
 
 // Handle a new OSC message

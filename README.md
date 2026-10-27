@@ -72,7 +72,7 @@ The sketch listens on port **10002** for OSC messages from the vehicle's onboard
 | `/temperature` | float | Cabin temperature (°F) |
 | `/water_heater` | float | Heater state (0=off, >0=on) |
 | `/poof_count` | float | Running poof counter |
-| `/poof` | float | Poof button, `1.0` held, `0.0` released (rhb-poof-controller). Shows a big flaming POOF while held |
+| `/poof` | float | Poof button, `1.0` held, `0.0` released (rhb-poof-controller). Flashes an orange pill behind the poof counter while held |
 | `/free_disk` | float | Free disk space on logger |
 | `/engine` | float | Engine state |
 | `/moving` | float | Moving state |
@@ -88,7 +88,7 @@ Position archives live in `rhbbodydisplay/positions/` as `positions_YYYY.zip` fi
 | Key | Action |
 |-----|--------|
 | `r` | Start / stop replay |
-| `p` | Press / release the poof button, to try the POOF without the panel |
+| `p` | Press / release the poof button, to try the pill without the panel |
 | `↑` / `↓` | Next / previous day session |
 | `+` / `=` | Double replay speed (up to 3600×) |
 | `-` | Halve replay speed |
