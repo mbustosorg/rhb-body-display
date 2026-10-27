@@ -13,3 +13,6 @@ positions/
 
 # Archives. The map sources that are already tracked stay tracked; nothing new
 *.zip
+
+# Links to the private artifacts the report tooling published, one per night
+reporting/published_links.json
